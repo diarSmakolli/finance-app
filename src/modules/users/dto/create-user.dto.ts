@@ -4,7 +4,7 @@ export class CreateUserDto {
     @IsNotEmpty()
     firstName: string;
 
-    @IsNotEmpty()
+    @IsNotEmpty({ message: 'Last name is required.'})
     lastName: string;
 
     @IsEmail()
