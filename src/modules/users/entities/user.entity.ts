@@ -26,7 +26,7 @@ export class User {
     @Column({ default: false })
     isBlocked: boolean;
 
-    @Column({ default: 'user' })
+    @Column({ default: 'client' })
     role: string;
 
     @UpdateDateColumn()
