@@ -53,8 +53,7 @@ export class AuthService {
         };
     }
 
-    async signIn(email: string, password: string): Promise<any> {
-
+    async signIn(email: string, password: string, res: Response): Promise<any> {
         if(!email || !password) {
             throw new BadRequestException('Email and password are required.');
         }
@@ -68,7 +67,7 @@ export class AuthService {
         });
 
         if(!user) {
-            throw new NotFoundException('Account is not found in our records.');
+            throw new NotFoundException('Wrong credentials.');
         }
 
         if(user.isBlocked) {
@@ -101,14 +100,14 @@ export class AuthService {
             role: user.role,
         };
 
-        // const accessToken = this.jwtService.sign(payload);
+        const accessToken = this.jwtService.sign(payload, { expiresIn: '1h' });
 
-        // res.cookie('accessToken', accessToken, {
-        //     httpOnly: true,
-        //     secure: false,
-        //     sameSite: 'strict',
-        //     maxAge: 3600000,
-        // });
+        res.cookie('accessToken', accessToken, {
+            httpOnly: true,
+            secure: false,
+            sameSite: 'strict',
+            maxAge: 3600000,
+        });
 
         return {
             status: 'success',
@@ -119,4 +118,19 @@ export class AuthService {
             }
         }
     }
+
+    async signOut(res: Response): Promise<any> {
+        res.clearCookie('accessToken', {
+            httpOnly: true,
+            secure: false,
+            sameSite: 'strict',
+        });
+
+        return {
+            status: 'success',
+            code: '200',
+            message: 'Logged out successfully.',
+        }
+    }
+
 }
