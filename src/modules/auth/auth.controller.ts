@@ -1,10 +1,9 @@
-import { Controller, Post, Body, Res, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, Res, UseGuards, Req, Get } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 import { ResponseUserDto } from '../users/dto/response-user.dto';
 import { ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
-import { AuthMiddleware } from './auth.middleware';
 import { AuthGuard } from './auth.guard';
 
 @ApiTags('auth')
@@ -21,7 +20,7 @@ export class AuthController {
         type: Object
     })
     async signUp(@Body() createUserDto: CreateUserDto): Promise<any> {
-        const user = this.authService.signUp(createUserDto);
+        const user = await this.authService.signUp(createUserDto);
         return user;
     }
 
@@ -33,10 +32,40 @@ export class AuthController {
     })
     async signIn(
         @Body() body: { email: string, password: string },
-        @Res() res: Response
+        @Res() res: Response,
+        @Req() req: Request,
     ): Promise<any> {
-        const user = await this.authService.signIn(body.email, body.password, res);
+        const user = await this.authService.signIn(body.email, body.password, res, req);
         return res.json(user);
+    }
+
+    @Get('self')
+    @ApiResponse({
+        status: 200,
+        description: 'Successfully retrieved details',
+        type: Object,
+    })
+    @UseGuards(AuthGuard)
+    async getSelf(@Req() req: Request, @Res() res: Response): Promise<any> {
+        return res.json({
+            status: 'success',
+            code: '200',
+            message: 'User details retrieved successfully',
+            data: {
+                user: req['user']
+            }
+        });
+    }
+
+    @Post('forgot-password')
+    @ApiResponse({
+        status: 200,
+        description: 'Password reset instructions sent if email exists.',
+        type: Object,
+    })
+    async forgotPassword(@Body() body: { email: string }): Promise<any> {
+        const forgotReq = await this.authService.forgotPassword(body.email);
+        return forgotReq;
     }
 
     @Post('logout')
@@ -46,9 +75,12 @@ export class AuthController {
         type: Object,
     })
     @UseGuards(AuthGuard)
-    async signOut(@Res() res: Response): Promise<any> {
-        const user = this.authService.signOut(res);
-        return res.json(user);
+    async signOut(
+        @Req() req: Request & { cookies: { [key: string]: string } },
+        @Res() res: Response
+    ): Promise<void> {
+        const result = await this.authService.signOut(req, res);
+        res.json(result);
     }
 
 }

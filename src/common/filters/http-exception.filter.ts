@@ -15,6 +15,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ? exception.getResponse()
       : 'Internal server error';
 
+    if (status === HttpStatus.INTERNAL_SERVER_ERROR) {
+      console.error('500 Internal Server Error:', {
+        error: exception,
+        message: exception instanceof Error ? exception.message : message,
+        stack: exception instanceof Error ? exception.stack : undefined
+      });
+    }
+
     response.status(status).json({
       statusCode: status,
       timestamp: new Date().toISOString(),
