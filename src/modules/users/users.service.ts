@@ -187,7 +187,6 @@ export class UsersService {
       throw new NotFoundException('Profile picture not found');
     }
 
-
     if (user.isBlocked) {
       this.logger.warn(`Account is marked as blocked, user.isBlocked: ${user.isBlocked}`, 'AuthService.resetPassword');
       throw new UnauthorizedException(
@@ -238,13 +237,6 @@ export class UsersService {
             userId: user.id,
             expiredAt: MoreThan(new Date())
         },
-        // select: [
-        //     'id',
-        //     'deviceInfo',
-        //     'ipAddress',
-        //     'createdAt',
-        //     'expiredAt'
-        // ],
         order: {
             createdAt: 'DESC'
         }
@@ -274,7 +266,7 @@ export class UsersService {
 
     if (!user) {
         this.logger.warn(`User not found with id: ${userId}`, 'UsersService.terminateSession');
-        throw new NotFoundException('Cannot process this request at this time.');
+        throw new NotFoundException('Cannot process this request at this time, please try again later!');
     }
 
     if (!user.isActive || user.isBlocked || user.isSuspicious) {
@@ -295,7 +287,7 @@ export class UsersService {
 
     if (!session) {
         this.logger.warn(`Session ${sessionId} not found for user ${userId}`, 'UsersService.terminateSession');
-        throw new NotFoundException('Cannot process this request at this time, because no session founded.');
+        throw new NotFoundException('No sessions has been found in our records.');
     }
 
     await this.sessionRepository.remove(session);
@@ -305,7 +297,7 @@ export class UsersService {
     return {
         status: 'success',
         code: '200',
-        message: 'Session terminated successfully'
+        message: 'Session terminated successfully.'
     };
   }
 }

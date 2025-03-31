@@ -15,8 +15,17 @@ export class NotificationController {
         description: 'Get all notifications for the user'
     })
     @UseGuards(AuthGuard)
-    async getAllNotifications(@Req() req: Request, @Param('userId') userId: string) {
-        const notifications = await this.notificationService.getAllByUserId(userId);
+    async getAllNotifications(
+        @Req() req: Request,
+        @Param('userId') userId: string,
+        @Query('page') page: number = 1,
+        @Query('limit') limit: number = 10
+    ) {
+        const notifications = await this.notificationService.getAllByUserId(
+            userId,
+            page,
+            limit
+        );
         return notifications;
     }
 

@@ -30,7 +30,7 @@ export class UsersController {
         return {
             status: 'success',
             code: '200',
-            message: 'Personal information updated successfully',
+            message: 'Personal information updated successfully.',
             data: {
                 user: updatedUser
             }
@@ -50,7 +50,7 @@ export class UsersController {
         return {
             status: 'success',
             code: '200',
-            message: 'User personal information retrieved successfully',
+            message: 'User personal information retrieved successfully.',
             data: {
                 user
             }
@@ -78,7 +78,7 @@ export class UsersController {
     ) {
         try {
             if (!file) {
-                throw new BadRequestException('No file uploaded');
+                throw new BadRequestException('No file uploaded.');
             }
 
             const userId = req['user'].id;
@@ -87,7 +87,7 @@ export class UsersController {
             return {
                 status: 'success',
                 code: '200',
-                message: 'Profile picture uploaded successfully',
+                message: 'Profile picture uploaded successfully.',
                 data: {
                     user: updatedUser
                 }
