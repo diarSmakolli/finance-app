@@ -20,10 +20,10 @@ export class ResponseUserDto {
     level: number;
     priority: number;
     emailVerified: boolean;
-    emailVerificationToken: string;
-    emailVerificationExpires: Date;
-    passwordResetToken: string;
-    passwordResetExpires: Date;
+    emailVerificationToken: string | null;
+    emailVerificationExpires: Date | null;
+    passwordResetToken: string | null;
+    passwordResetExpires: Date | null;
     createdAt: Date;
     updatedAt: Date;
     profilePicture: string;

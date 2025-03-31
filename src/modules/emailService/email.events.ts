@@ -73,4 +73,19 @@ export class EmailEvents {
         }
     }
 
+    @OnEvent('email.password_changed')
+    async handlePasswordChanged(payload: {
+        email: string,
+        firstName: string
+    }) {
+        try {
+            await this.emailService.sendPasswordChangedEmail(
+                payload.email,
+                payload.firstName
+            );
+        } catch (error) {
+            console.error('Failed to send password changed email:', error);
+        }
+    }
+
 }

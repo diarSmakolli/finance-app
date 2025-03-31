@@ -6,12 +6,12 @@ export class EmailService {
     private transporter: nodemailer.Transporter;
 
     constructor() {
-        console.log('Initializing email service with:', { 
+        console.log('Initializing email service with:', {
             user: process.env.APP_EMAIL_GMAIL,
             // Don't log the actual password
-            hasPassword: !!process.env.APP_PASSWORD_GMAIL 
+            hasPassword: !!process.env.APP_PASSWORD_GMAIL
         });
-        
+
         this.transporter = nodemailer.createTransport({
             service: 'gmail',
             auth: {
@@ -40,14 +40,14 @@ export class EmailService {
 
         try {
             await this.transporter.sendMail(mailOptions);
-        } catch(error) {
+        } catch (error) {
             throw new Error(`Failed to send verification email: ${error.message}`)
         }
     }
 
     async sendVerifyAccountEmail(email: string, token: string, firstName: string): Promise<void> {
         console.log('Attempting to send verification email to:', email); // Debug log
-        
+
         const mailOptions = {
             from: process.env.APP_EMAIL_GMAIL,
             to: email,
@@ -64,7 +64,7 @@ export class EmailService {
         try {
             const result = await this.transporter.sendMail(mailOptions);
             console.log('Email sent successfully:', result); // Debug log
-        } catch(error) {
+        } catch (error) {
             console.error('Email sending failed:', error);
             throw new Error(`Failed to send verification email: ${error.message}`);
         }
@@ -94,7 +94,7 @@ export class EmailService {
 
         try {
             await this.transporter.sendMail(mailOptions);
-        } catch(error) {
+        } catch (error) {
             throw new Error(`Failed to send verification email: ${error.message}`)
         }
     }
@@ -109,10 +109,30 @@ export class EmailService {
 
         try {
             await this.transporter.sendMail(mailOptions);
-        } catch(error) {
+        } catch (error) {
             throw new Error(`Failed to send verification email: ${error.message}`)
         }
     }
 
+    async sendPasswordChangedEmail(email: string, firstName: string): Promise<void> {
+        const mailOptions = {
+            from: process.env.APP_EMAIL_GMAIL,
+            to: email,
+            subject: 'Your password has been changed',
+            text: `Hi ${firstName},
+                
+            This email confirms that your password has been changed.
+
+            If you did not make this change, please contact our support team immediately.
+
+            Best regards,
+            ${process.env.APP_NAME} Team`
+        };
+        try {
+            await this.transporter.sendMail(mailOptions);
+        } catch (error) {
+            throw new Error(`Failed to send password changed email: ${error.message}`);
+        }
+    }
 
 }
