@@ -19,6 +19,7 @@ import { LoginHistory } from '../users/entities/loginhistory.entity';
 import { CookieOptions } from 'express';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AppLoggerService } from '../logger/logger.service';
+import { Notification } from '../notifications/notification.entity';
 
 @Injectable()
 export class AuthService {
@@ -29,6 +30,8 @@ export class AuthService {
         private readonly sessionRepository: Repository<Session>,
         @InjectRepository(LoginHistory)
         private readonly loginHistoryRepository: Repository<LoginHistory>,
+        @InjectRepository(Notification)
+        private readonly notificationRepository: Repository<Notification>,
         private readonly jwtService: JwtService,
         private readonly emailService: EmailService,
         private readonly eventEmitter: EventEmitter2,
@@ -231,6 +234,15 @@ export class AuthService {
 
         if(!existingLogin) {
             this.logger.log(`Login from new device comes for user with email: ${email}, created new event for notify user 'login.new_device'.`, 'AuthService.signIn');
+            const newNotification = this.notificationRepository.create({
+                title: "New device detected",
+                message: `New Device Detected for your account from IP address: ${currentIp} on ${currentTime}. If this wasn't you please secure your account immediately.`,
+                read: false,
+                userId: user.id,
+            });
+            
+            await this.notificationRepository.save(newNotification);
+
             this.eventEmitter.emit('login.new_device', {
                 email: user.email,
                 firstName: user.firstName,
@@ -282,7 +294,7 @@ export class AuthService {
         await Promise.all([
             this.loginHistoryRepository.save(loginHistoryData),
             this.sessionRepository.save(session),
-            this.userRepository.save(user)
+            this.userRepository.save(user),
         ]);
 
         return {
@@ -334,7 +346,7 @@ export class AuthService {
 
         if(!email) {
             this.logger.warn(`Email is not provided: ${email}.`, 'AuthService.forgotPassword');
-            throw new BadRequestException('Email is mandatory field, please enter it.');
+            throw new BadRequestException('Email is required.');
         }
 
         const user = await this.userRepository.findOne({
@@ -349,21 +361,21 @@ export class AuthService {
         if(user.isBlocked) {
             this.logger.warn(`Account with email: ${email} is marked as blocked, user.isBlocked: ${user.isBlocked}`, 'AuthService.forgotPassword');
             throw new UnauthorizedException(
-                'If your email is registered, you will receive password reset instructions.'
+                'Your account has been locked due to restrictions of our policy. Please contact support for more details.'
             );
         }
 
         if(user.isSuspicious) {
             this.logger.warn(`Account with email: ${email} is marked as suspicious, user.isSuspicious: ${user.isSuspicious}.`, 'AuthService.forgotPassword');
             throw new UnauthorizedException(
-                `If your email is registered, you will receive password reset instructions.`
+                `Your account has been locked due to restrictions of our policy. Please contact support for more details.`
             );
         }
 
         if(!user.isActive) {
             this.logger.warn(`Account with email: ${email} is marked as inactive, user.isActive: ${user.isActive}`, 'AuthService.forgotPassword');
             throw new UnauthorizedException(
-                'If your email is registered, you will receive password reset instructions.'
+                'Your account has been locked due to restrictions of our policy. Please contact support for more details.'
             );
         }
         
@@ -433,27 +445,27 @@ export class AuthService {
 
         if (!user) {
             this.logger.warn(`user not found with reset token: ${resetTokenHash}, password expires: ${MoreThan(new Date())}`, 'AuthService.resetPassword');
-            throw new BadRequestException(`Link has expired, please try again`);
+            throw new BadRequestException(`Link has expired, please try again.`);
         }
 
         if(user.isBlocked) {
             this.logger.warn(`Account is marked as blocked, user.isBlocked: ${user.isBlocked}`, 'AuthService.resetPassword');
             throw new UnauthorizedException(
-                'Link has expired, please try again'
+                'Link has expired, please try again.'
             );
         }
 
         if(user.isSuspicious) {
             this.logger.warn(`Account is marked as suspicious, user.isSuspicious: ${user.isSuspicious}.`, 'AuthService.resetPassword');
             throw new UnauthorizedException(
-                `Link has expired, please try again`
+                `Link has expired, please try again.`
             );
         }
 
         if(!user.isActive) {
             this.logger.warn(`Account is marked as inactive, user.isActive: ${user.isActive}`, 'AuthService.resetPassword');
             throw new UnauthorizedException(
-                'Link has expired, please try again'
+                'Link has expired, please try again.'
             );
         }
 
@@ -473,6 +485,15 @@ export class AuthService {
             email: user.email,
             firstName: user.firstName
         });
+
+        const newNotification = this.notificationRepository.create({
+            title: "Your password has been changed",
+            message: `This confirms that your password has been changed. If you did not make thins change, please contact our support team immediately.`,
+            read: false,
+            userId: user.id,
+        });
+
+        await this.notificationRepository.save(newNotification);
 
         this.logger.debug(`
             Saved password as hashed password: ${hashedPassword}, and make empty passwordResetToken, and passwordResetExpires,
@@ -521,6 +542,15 @@ export class AuthService {
                 'Your email verification cannot be processed. Please make sure the link is correct and is not expired!'
             );
         }
+
+        const newNotification = this.notificationRepository.create({
+            title: "Account verified",
+            message: `This confirm that your account has been successfully verified.`,
+            read: false,
+            userId: user.id,
+        });
+
+        await this.notificationRepository.save(newNotification);
 
         user.emailVerified = true;
         user.emailVerificationToken = null;
@@ -586,6 +616,15 @@ export class AuthService {
             email: user.email,
             firstName: user.firstName
         });
+
+        const newNotification = this.notificationRepository.create({
+            title: "Your password has been changed",
+            message: `This confirms that your password has been changed. If you did not make thins change, please contact our support team immediately.`,
+            read: false,
+            userId: user.id,
+        });
+
+        await this.notificationRepository.save(newNotification);
 
         this.logger.debug(`
             Created event at event emmiter email.password_changed to notify the user for password changed.

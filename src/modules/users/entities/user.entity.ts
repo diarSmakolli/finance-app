@@ -46,7 +46,7 @@ export class User {
     hasAccess: boolean;
 
     @Column({ default: 'client' })
-    role: string;
+    role: string; // client, administration, sysadmins, infrastucture, wsadmin
 
     @Column({ nullable: true })
     lastLoginIp: string;

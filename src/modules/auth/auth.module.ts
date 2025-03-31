@@ -7,11 +7,12 @@ import { JwtModule } from '@nestjs/jwt';
 import { LoginHistory } from '../users/entities/loginhistory.entity';
 import { Session } from '../users/entities/session.entity';
 import { EmailModule } from '../emailService/email.module';
+import { Notification } from '../notifications/notification.entity';
 
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, LoginHistory, Session]),
+    TypeOrmModule.forFeature([User, LoginHistory, Session, Notification]),
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: '1h' }, 

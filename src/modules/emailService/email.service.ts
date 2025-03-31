@@ -1,16 +1,19 @@
 import { Injectable } from "@nestjs/common";
 import * as nodemailer from 'nodemailer';
+import { AppLoggerService } from "../logger/logger.service";
 
 @Injectable()
 export class EmailService {
     private transporter: nodemailer.Transporter;
 
-    constructor() {
-        console.log('Initializing email service with:', {
-            user: process.env.APP_EMAIL_GMAIL,
-            // Don't log the actual password
-            hasPassword: !!process.env.APP_PASSWORD_GMAIL
-        });
+    constructor(
+        private readonly logger: AppLoggerService
+    ) {
+        this.logger.log(
+            'Initializing email service with:' + 
+            `user: ${process.env.APP_EMAIL_GMAIL}, hasPassword: ${!!process.env.APP_PASSWORD_GMAIL}`,
+            'EmailService'
+        );
 
         this.transporter = nodemailer.createTransport({
             service: 'gmail',
@@ -23,14 +26,16 @@ export class EmailService {
         // Verify connection configuration
         this.transporter.verify((error, success) => {
             if (error) {
-                console.error('Email service error:', error);
+                this.logger.error('Email service configuration error', error.stack, 'EmailService');
             } else {
-                console.log('Email server is ready to send messages');
+                this.logger.log('Email server is ready to send messages', 'EmailService');
             }
         });
     }
 
     async sendWelcomeEmail(email: string, firstName: string): Promise<void> {
+        this.logger.log(`Sending welcome email to ${email}`, 'EmailService.sendWelcomeEmail');
+
         const mailOptions = {
             from: process.env.APP_EMAIL_GMAIL,
             to: email,
@@ -40,13 +45,19 @@ export class EmailService {
 
         try {
             await this.transporter.sendMail(mailOptions);
+            this.logger.log(`Welcome email sent successfully to ${email}`, 'EmailService.sendWelcomeEmail');
         } catch (error) {
-            throw new Error(`Failed to send verification email: ${error.message}`)
+            this.logger.error(
+                `Failed to send welcome email to ${email}`, 
+                error.stack, 
+                'EmailService.sendWelcomeEmail'
+            );
+            throw new Error(`Failed to send welcome email: ${error.message}`);
         }
     }
 
     async sendVerifyAccountEmail(email: string, token: string, firstName: string): Promise<void> {
-        console.log('Attempting to send verification email to:', email); // Debug log
+        this.logger.log(`Sending verification email to ${email}`, 'EmailService.sendVerifyAccountEmail');
 
         const mailOptions = {
             from: process.env.APP_EMAIL_GMAIL,
@@ -63,58 +74,119 @@ export class EmailService {
 
         try {
             const result = await this.transporter.sendMail(mailOptions);
-            console.log('Email sent successfully:', result); // Debug log
+            this.logger.log(
+                `Verification email sent successfully to ${email}`, 
+                'EmailService.sendVerifyAccountEmail'
+            );
+            this.logger.debug(
+                `Email sending result: ${JSON.stringify(result)}`,
+                'EmailService.sendVerifyAccountEmail'
+            );
         } catch (error) {
-            console.error('Email sending failed:', error);
+            this.logger.error(
+                `Failed to send verification email to ${email}`,
+                error.stack,
+                'EmailService.sendVerifyAccountEmail'
+            );
             throw new Error(`Failed to send verification email: ${error.message}`);
         }
     }
 
     async alertLoggedInFromNewDevice(email: string, firstName: string, currentIp: string, time: string): Promise<void> {
+        this.logger.log(
+            `Sending new device login alert to ${email}`,
+            'EmailService.alertLoggedInFromNewDevice'
+        );
+    
         const mailOptions = {
             from: process.env.APP_EMAIL_GMAIL,
             to: email,
             subject: `Successful sign-in for ${email} from new device!`,
             text: `
                 We're verifying a recent sign-in for ${email}.
-
-            Timestamp: ${time},
-            IP Address: ${currentIp}
-
-            You're receiving this message because of a successful sign-in from a device
-            that we didn't recognize. If you believe that this sign-in is suspicious,
-            please reset your password immediately.
-
-            If you're aware of this sign-in, please disregard this notice. This can happen when you use
-            your browser incognito or private browing mode or clear cookies.
-
-            Thanks,
+    
+                Timestamp: ${time},
+                IP Address: ${currentIp}
+    
+                You're receiving this message because of a successful sign-in from a device
+                that we didn't recognize. If you believe that this sign-in is suspicious,
+                please reset your password immediately.
+    
+                If you're aware of this sign-in, please disregard this notice. This can happen when you use
+                your browser incognito or private browing mode or clear cookies.
+    
+                Thanks,
+                ${process.env.APP_NAME} Team
             `
         }
-
+    
         try {
-            await this.transporter.sendMail(mailOptions);
+            const result = await this.transporter.sendMail(mailOptions);
+            this.logger.log(
+                `New device login alert sent successfully to ${email}`,
+                'EmailService.alertLoggedInFromNewDevice'
+            );
+            this.logger.debug(
+                `Email sending result: ${JSON.stringify(result)}`,
+                'EmailService.alertLoggedInFromNewDevice'
+            );
         } catch (error) {
-            throw new Error(`Failed to send verification email: ${error.message}`)
+            this.logger.error(
+                `Failed to send new device login alert to ${email}`,
+                error.stack,
+                'EmailService.alertLoggedInFromNewDevice'
+            );
+            throw new Error(`Failed to send new device login alert: ${error.message}`);
         }
     }
 
-    async forgotPasswordEmail(email: string, resetLink: string, firstName: string) {
+    async forgotPasswordEmail(email: string, resetLink: string, firstName: string): Promise<void> {
+        this.logger.log(
+            `Sending password reset email to ${email}`,
+            'EmailService.forgotPasswordEmail'
+        );
+    
         const mailOptions = {
             from: process.env.APP_EMAIL_GMAIL,
             to: email,
-            subject: `Forgot password`,
-            text: `Hi, ${firstName}, Link to recover your account: ${resetLink}`
+            subject: `Password Reset Request - ${process.env.APP_NAME}`,
+            text: `Hi ${firstName},
+    
+            You recently requested to reset your password. Click the link below to reset it:
+            ${resetLink}
+    
+            If you did not request a password reset, please ignore this email or contact support if you have concerns.
+    
+            Best regards,
+            ${process.env.APP_NAME} Team`
         }
-
+    
         try {
-            await this.transporter.sendMail(mailOptions);
+            const result = await this.transporter.sendMail(mailOptions);
+            this.logger.log(
+                `Password reset email sent successfully to ${email}`,
+                'EmailService.forgotPasswordEmail'
+            );
+            this.logger.debug(
+                `Email sending result: ${JSON.stringify(result)}`,
+                'EmailService.forgotPasswordEmail'
+            );
         } catch (error) {
-            throw new Error(`Failed to send verification email: ${error.message}`)
+            this.logger.error(
+                `Failed to send password reset email to ${email}`,
+                error.stack,
+                'EmailService.forgotPasswordEmail'
+            );
+            throw new Error(`Failed to send password reset email: ${error.message}`);
         }
     }
 
     async sendPasswordChangedEmail(email: string, firstName: string): Promise<void> {
+        this.logger.log(
+            `Sending password changed confirmation to ${email}`,
+            'EmailService.sendPasswordChangedEmail'
+        );
+    
         const mailOptions = {
             from: process.env.APP_EMAIL_GMAIL,
             to: email,
@@ -122,16 +194,30 @@ export class EmailService {
             text: `Hi ${firstName},
                 
             This email confirms that your password has been changed.
-
+    
             If you did not make this change, please contact our support team immediately.
-
+    
             Best regards,
             ${process.env.APP_NAME} Team`
         };
+    
         try {
-            await this.transporter.sendMail(mailOptions);
+            const result = await this.transporter.sendMail(mailOptions);
+            this.logger.log(
+                `Password changed confirmation sent successfully to ${email}`,
+                'EmailService.sendPasswordChangedEmail'
+            );
+            this.logger.debug(
+                `Email sending result: ${JSON.stringify(result)}`,
+                'EmailService.sendPasswordChangedEmail'
+            );
         } catch (error) {
-            throw new Error(`Failed to send password changed email: ${error.message}`);
+            this.logger.error(
+                `Failed to send password changed confirmation to ${email}`,
+                error.stack,
+                'EmailService.sendPasswordChangedEmail'
+            );
+            throw new Error(`Failed to send password changed confirmation: ${error.message}`);
         }
     }
 

@@ -8,6 +8,9 @@ import { AppLoggerService } from '../logger/logger.service';
 import * as fs from 'fs';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 export enum TicketStatus {
     ACTIVE = 'ACTIVE',
@@ -26,6 +29,7 @@ export enum Department {
 export class TicketService {
 
     constructor(
+        @InjectQueue('tickets') private ticketsQueue: Queue,
         @InjectRepository(Ticket)
         private ticketRepository: Repository<Ticket>,
         @InjectRepository(TicketMessage)
@@ -34,6 +38,43 @@ export class TicketService {
         private userRepository: Repository<User>,
         private readonly logger: AppLoggerService
     ) { }
+
+    @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+    async scheduleInactiveTicketsCheck() {
+        this.logger.log(
+            'Scheduling inactive tickets check',
+            'TicketService'
+        );
+
+        await this.ticketsQueue.add(
+            'archive-inactive-tickets',
+            {
+                timestamp: new Date()
+            },
+            {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 60000
+                },
+                removeOnComplete: true
+            }
+        );
+    }
+
+    // Method for manual testing
+    async manuallyTriggerArchiveCheck() {
+        const job = await this.ticketsQueue.add('archive-inactive-tickets', {
+            timestamp: new Date(),
+            manual: true
+        });
+
+        return {
+            jobId: job.id,
+            status: 'queued',
+            message: 'Archive check triggered successfully'
+        };
+    }
 
     async createTicket(
         userId: string,

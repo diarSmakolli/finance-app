@@ -10,7 +10,8 @@ import { User } from '../users/entities/user.entity';
 import { JwtModule } from '@nestjs/jwt';
 import { Session } from '../users/entities/session.entity';
 import { multerConfig } from '../../config/multer.config';
-
+import { BullModule } from '@nestjs/bull';
+import { TicketArchiveProcessor } from './processors/ticket-archive.processor';
 @Module({
     imports: [
         TypeOrmModule.forFeature([Ticket, TicketMessage, User, Session]),
@@ -19,10 +20,28 @@ import { multerConfig } from '../../config/multer.config';
             secret: process.env.JWT_SECRET || 'cdcdcdc123453',
             signOptions: { expiresIn: '1h' },
         }),
-        LoggerModule
+        LoggerModule,
+        BullModule.registerQueue({
+            name: 'tickets',
+            redis: {
+                host: process.env.REDIS_HOST || 'localhost',
+                port: Number(process.env.REDIS_PORT || 6379),
+            },
+            defaultJobOptions: {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 60000
+                },
+                removeOnComplete: true
+            }
+        }),
     ],
     controllers: [TicketController],
-    providers: [TicketService],
+    providers: [
+        TicketService,
+        TicketArchiveProcessor
+    ],
     exports: [TicketService]
 })
 export class TicketModule { }

@@ -1,0 +1,194 @@
+TicketArchiveProcessor
+
+
+@Processor('tickets')
+@Injectable()
+export class TicketArchiveProcessor {
+    constructor(
+        @InjectRepository(Ticket)
+        private ticketRepository: Repository<Ticket>,
+        @InjectRepository(TicketMessage)
+        private messageRepository: Repository<TicketMessage>,
+        @InjectRepository(Notification)
+        private notificationRepository: Repository<Notification>,
+        private readonly logger: AppLoggerService
+    ) {}
+
+    // ...existing archive process...
+
+    @Process('ticket-notification')
+    async processTicketNotification(job: Job<{
+        userId: string;
+        title: string;
+        message: string;
+        ticketId: string;
+    }>) {
+        try {
+            const { userId, title, message, ticketId } = job.data;
+
+            const notification = this.notificationRepository.create({
+                userId,
+                title,
+                message,
+                read: false
+            });
+
+            await this.notificationRepository.save(notification);
+
+            this.logger.log(
+                `Created notification for ticket ${ticketId} for user ${userId}`,
+                'TicketArchiveProcessor'
+            );
+
+            return { success: true, notificationId: notification.id };
+        } catch (error) {
+            this.logger.error(
+                `Failed to create notification: ${error.message}`,
+                error.stack,
+                'TicketArchiveProcessor'
+            );
+            throw error;
+        }
+    }
+
+    @Process('ticket-status-change')
+    async processTicketStatusChange(job: Job<{
+        ticketId: string;
+        oldStatus: string;
+        newStatus: string;
+        userId: string;
+        managerId?: string;
+    }>) {
+        try {
+            const { ticketId, oldStatus, newStatus, userId, managerId } = job.data;
+
+            // Notify ticket owner
+            await this.notificationRepository.save({
+                userId,
+                title: 'Ticket Status Updated',
+                message: `Your ticket status has changed from ${oldStatus} to ${newStatus}`,
+                read: false
+            });
+
+            // Notify manager if assigned
+            if (managerId) {
+                await this.notificationRepository.save({
+                    userId: managerId,
+                    title: 'Ticket Status Updated',
+                    message: `Ticket #${ticketId} status has changed from ${oldStatus} to ${newStatus}`,
+                    read: false
+                });
+            }
+
+            return { success: true };
+        } catch (error) {
+            this.logger.error(
+                `Failed to process ticket status change: ${error.message}`,
+                error.stack,
+                'TicketArchiveProcessor'
+            );
+            throw error;
+        }
+    }
+
+    @Process('new-ticket-reply')
+    async processNewReply(job: Job<{
+        ticketId: string;
+        senderId: string;
+        recipientId: string;
+        messagePreview: string;
+    }>) {
+        try {
+            const { ticketId, senderId, recipientId, messagePreview } = job.data;
+
+            await this.notificationRepository.save({
+                userId: recipientId,
+                title: 'New Reply to Your Ticket',
+                message: `You have a new reply on ticket #${ticketId}: ${messagePreview.substring(0, 100)}...`,
+                read: false
+            });
+
+            return { success: true };
+        } catch (error) {
+            this.logger.error(
+                `Failed to process new reply notification: ${error.message}`,
+                error.stack,
+                'TicketArchiveProcessor'
+            );
+            throw error;
+        }
+    }
+}
+
+
+
+TICKET TicketService
+@Injectable()
+export class TicketService {
+    // ...existing code...
+
+    async addMessage(ticketId: string, senderId: string, data: { message: string }, files?: Express.Multer.File[]): Promise<TicketMessage> {
+        // ...existing message adding logic...
+
+        const savedMessage = await this.messageRepository.save(message);
+
+        // Add notification job for recipient
+        await this.ticketsQueue.add('new-ticket-reply', {
+            ticketId,
+            senderId,
+            recipientId: ticket.userId === senderId ? ticket.managerId : ticket.userId,
+            messagePreview: data.message
+        });
+
+        return savedMessage;
+    }
+
+    async updateTicketStatus(ticketId: string, managerId: string, data: { status: TicketStatus; comment?: string }): Promise<Ticket> {
+        // ...existing status update logic...
+
+        const oldStatus = ticket.status;
+        ticket.status = data.status;
+        
+        // Add notification job for status change
+        await this.ticketsQueue.add('ticket-status-change', {
+            ticketId,
+            oldStatus,
+            newStatus: data.status,
+            userId: ticket.userId,
+            managerId: ticket.managerId
+        });
+
+        return updatedTicket;
+    }
+
+    async assignManager(ticketId: string, managerId: string): Promise<Ticket> {
+        // ...existing assign logic...
+
+        // Add notification for new assignment
+        await this.ticketsQueue.add('ticket-notification', {
+            userId: managerId,
+            title: 'New Ticket Assignment',
+            message: `You have been assigned ticket #${ticketId}`,
+            ticketId
+        });
+
+        return updatedTicket;
+    }
+}
+
+
+update ticket module to include notification entity:
+@Module({
+    imports: [
+        TypeOrmModule.forFeature([
+            Ticket, 
+            TicketMessage, 
+            User, 
+            Session, 
+            Notification
+        ]),
+        // ...other imports
+    ],
+    // ...rest of module config
+})
+export class TicketModule { }

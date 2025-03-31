@@ -33,7 +33,7 @@ export class TicketMessage {
     createdAt: Date;
 
     // Sender of the message (User or Manager)
-    @Column({ type: 'uuid' })
+    @Column({ type: 'uuid', nullable: true  })
     senderId: string;
 
     @ManyToOne(() => User, user => user.messages, { onDelete: 'CASCADE' })
