@@ -18,7 +18,7 @@ export class Ticket {
     subject: string;
 
     @Column()
-    status: string; // ACTIVE, IN_PROGRESS, RESOLVED
+    status: string; //active, open, in_progress, resolved, archived
 
     @CreateDateColumn()
     createdAt: Date;

@@ -1,8 +1,9 @@
-import { Controller, Post, Get, Put, Body, Param, UseGuards, Req, UseInterceptors, UploadedFiles, Res } from '@nestjs/common';
+import { Controller, Post, Get, Put, Body, Param, UseGuards, Req, UseInterceptors, UploadedFiles, Res, StreamableFile, Query } from '@nestjs/common';
 import { ApiTags, ApiResponse, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { TicketService, TicketStatus, Department } from './ticket.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
 
 @ApiTags('support-tickets')
 @Controller('tickets')
@@ -28,6 +29,232 @@ export class TicketController {
             code: '201',
             message: 'Ticket created successfully',
             data: { ticket }
+        };
+    }
+
+    @Get('my-tickets')
+    @ApiOperation({ summary: 'Get active tickets for the authenticated client' })
+    @ApiResponse({ status: 200, description: 'Active tickets retrieved successfully' })
+    async getMyTickets(
+        @Req() req: any,
+        @Query('page') page?: number,
+        @Query('limit') limit?: number,
+        @Query('status') status?: string[],
+        @Query('sortBy') sortBy?: string,
+        @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
+    ) {
+        const result = await this.ticketService.getClientTickets(
+            req.user.id,
+            {
+                page,
+                limit,
+                status: Array.isArray(status) ? status : status ? [status] : undefined,
+                sortBy,
+                sortOrder
+            }
+        );
+
+        return {
+            status: 'success',
+            code: '200',
+            message: 'Your tickets retrieved successfully',
+            data: {
+                tickets: result.tickets,
+                pagination: {
+                    total: result.total,
+                    pages: result.pages,
+                    currentPage: result.currentPage,
+                    limit: limit || 10
+                }
+            }
+        };
+    }
+
+    @Get('my-tickets/archived')
+    @ApiOperation({ summary: 'Get archived tickets for the authenticated client' })
+    @ApiResponse({ status: 200, description: 'Archived tickets retrieved successfully' })
+    async getMyArchivedTickets(
+        @Req() req: any,
+        @Query('page') page?: number,
+        @Query('limit') limit?: number,
+        @Query('sortBy') sortBy?: string,
+        @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
+    ) {
+        const result = await this.ticketService.getClientArchivedTickets(
+            req.user.id,
+            {
+                page,
+                limit,
+                sortBy,
+                sortOrder
+            }
+        );
+
+        return {
+            status: 'success',
+            code: '200',
+            message: 'Your archived tickets retrieved successfully',
+            data: {
+                tickets: result.tickets,
+                pagination: {
+                    total: result.total,
+                    pages: result.pages,
+                    currentPage: result.currentPage,
+                    limit: limit || 10
+                }
+            }
+        };
+    }
+
+    @Get('assigned-to-me')
+    @ApiOperation({ summary: 'Get tickets assigned to the authenticated manager' })
+    @ApiResponse({ status: 200, description: 'Assigned tickets retrieved successfully' })
+    async getAssignedTickets(
+        @Req() req: any,
+        @Query('page') page?: number,
+        @Query('limit') limit?: number,
+        @Query('status') status?: TicketStatus[],
+        @Query('sortBy') sortBy?: string,
+        @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
+    ) {
+        const result = await this.ticketService.getAssignedTickets(
+            req.user.id,
+            {
+                page,
+                limit,
+                status,
+                sortBy,
+                sortOrder
+            }
+        );
+
+        return {
+            status: 'success',
+            code: '200',
+            message: 'Your assigned tickets retrieved successfully',
+            data: {
+                tickets: result.tickets,
+                pagination: {
+                    total: result.total,
+                    pages: result.pages,
+                    currentPage: result.currentPage,
+                    limit: limit || 10
+                }
+            }
+        };
+    }
+
+    @Get('unassigned')
+    @ApiOperation({ summary: 'Get all unassigned tickets' })
+    @ApiResponse({ status: 200, description: 'Unassigned tickets retrieved successfully' })
+    async getUnassignedTickets(
+        @Query('page') page?: number,
+        @Query('limit') limit?: number,
+        @Query('department') department?: Department,
+        @Query('sortBy') sortBy?: string,
+        @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
+    ) {
+        const result = await this.ticketService.getUnassignedTickets({
+            page,
+            limit,
+            department,
+            sortBy,
+            sortOrder
+        });
+
+        return {
+            status: 'success',
+            code: '200',
+            message: 'Unassigned tickets retrieved successfully',
+            data: {
+                tickets: result.tickets,
+                pagination: {
+                    total: result.total,
+                    pages: result.pages,
+                    currentPage: result.currentPage,
+                    limit: limit || 10
+                }
+            }
+        };
+    }
+
+    @Get('open')
+    @ApiOperation({ summary: 'Get all open tickets' })
+    @ApiResponse({ status: 200, description: 'Open tickets retrieved successfully' })
+    async getOpenTickets(
+        @Query('page') page?: number,
+        @Query('limit') limit?: number,
+        @Query('department') department?: Department,
+        @Query('sortBy') sortBy?: string,
+        @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
+    ) {
+        const result = await this.ticketService.getOpenTickets({
+            page,
+            limit,
+            department,
+            sortBy,
+            sortOrder
+        });
+
+        return {
+            status: 'success',
+            code: '200',
+            message: 'Open tickets retrieved successfully',
+            data: {
+                tickets: result.tickets,
+                pagination: {
+                    total: result.total,
+                    pages: result.pages,
+                    currentPage: result.currentPage,
+                    limit: limit || 10
+                }
+            }
+        };
+    }
+   
+    @Get()
+    @ApiOperation({ summary: 'List tickets with pagination and filters' })
+    @ApiResponse({ status: 200, description: 'Tickets retrieved successfully' })
+    async listTickets(
+        @Query('page') page?: number,
+        @Query('limit') limit?: number,
+        @Query('search') search?: string,
+        @Query('status') status?: TicketStatus,
+        @Query('department') department?: Department,
+        @Query('userId') userId?: string,
+        @Query('managerId') managerId?: string,
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+        @Query('sortBy') sortBy?: string,
+        @Query('sortOrder') sortOrder?: 'ASC' | 'DESC'
+    ) {
+        const result = await this.ticketService.listTickets({
+            page,
+            limit,
+            search,
+            status,
+            department,
+            userId,
+            managerId,
+            dateFrom,
+            dateTo,
+            sortBy,
+            sortOrder
+        });
+
+        return {
+            status: 'success',
+            code: '200',
+            message: 'Tickets retrieved successfully',
+            data: {
+                tickets: result.tickets,
+                pagination: {
+                    total: result.total,
+                    pages: result.pages,
+                    currentPage: result.currentPage,
+                    limit: limit || 10
+                }
+            }
         };
     }
 
@@ -112,6 +339,85 @@ export class TicketController {
         return ticket;
     }
 
-    
+    @Get(':ticketId/messages/:messageId/attachments/:filename')
+    @ApiOperation({ summary: 'Preview ticket message attachment' })
+    @ApiResponse({ status: 200, description: 'File streamed successfully' })
+    async previewAttachment(
+        @Param('ticketId') ticketId: string,
+        @Param('messageId') messageId: string,
+        @Param('filename') filename: string,
+        @Req() req: any,
+        @Res({ passthrough: true }) response: Response
+    ): Promise<StreamableFile> {
+        const { file, mimeType, filename: originalName } =
+            await this.ticketService.previewAttachment(
+                ticketId,
+                messageId,
+                filename,
+                req.user.id
+            );
+
+        response.set({
+            'Content-Type': mimeType,
+            'Content-Disposition': `inline; filename="${originalName}"`,
+            'Cache-Control': 'max-age=3600'
+        });
+
+        return file;
+    }
+
+    @Get(':ticketId/messages/:messageId/attachments/:filename/download')
+    @ApiOperation({ summary: 'Download ticket message attachment' })
+    @ApiResponse({ status: 200, description: 'File downloaded successfully' })
+    async downloadAttachment(
+        @Param('ticketId') ticketId: string,
+        @Param('messageId') messageId: string,
+        @Param('filename') filename: string,
+        @Req() req: any,
+        @Res({ passthrough: true }) response: Response
+    ): Promise<StreamableFile> {
+        const { file, mimeType, filename: originalName } =
+            await this.ticketService.downloadAttachment(
+                ticketId,
+                messageId,
+                filename,
+                req.user.id
+            );
+
+        response.set({
+            'Content-Type': mimeType,
+            'Content-Disposition': `attachment; filename="${originalName}"`,
+            'Cache-Control': 'no-cache'
+        });
+
+        return file;
+    }
+
+    @Put(':id/status')
+    @ApiOperation({ summary: 'Update ticket status' })
+    @ApiResponse({ status: 200, description: 'Ticket status updated successfully' })
+    async updateTicketStatus(
+        @Param('id') ticketId: string,
+        @Body() data: {
+            status: TicketStatus;
+            comment?: string;
+        },
+        @Req() req: any
+    ) {
+        const updatedTicket = await this.ticketService.updateTicketStatus(
+            ticketId,
+            req.user.id,
+            data
+        );
+
+        return {
+            status: 'success',
+            code: '200',
+            message: 'Ticket status updated successfully',
+            data: {
+                ticket: updatedTicket
+            }
+        };
+    }
 
 }
