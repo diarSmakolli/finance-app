@@ -27,7 +27,6 @@ export enum Department {
 
 @Injectable()
 export class TicketService {
-
     constructor(
         @InjectQueue('tickets') private ticketsQueue: Queue,
         @InjectRepository(Ticket)
@@ -37,43 +36,58 @@ export class TicketService {
         @InjectRepository(User)
         private userRepository: Repository<User>,
         private readonly logger: AppLoggerService
-    ) { }
+    ) {
+        this.initializeQueue();
+    }
+
+    private async initializeQueue() {
+        await this.ticketsQueue.clean(0, 'completed');
+        await this.ticketsQueue.clean(0, 'failed');
+        this.logger.log('Queue initialized and cleaned', 'TicketService');
+    }
 
     @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
     async scheduleInactiveTicketsCheck() {
-        this.logger.log(
-            'Scheduling inactive tickets check',
-            'TicketService'
-        );
+        const start = performance.now();
+        try {
+            this.logger.log('Scheduling inactive tickets check', 'TicketService');
 
-        await this.ticketsQueue.add(
-            'archive-inactive-tickets',
-            {
-                timestamp: new Date()
-            },
-            {
-                attempts: 3,
-                backoff: {
-                    type: 'exponential',
-                    delay: 60000
-                },
-                removeOnComplete: true
+            // Check if job already exists
+            const pendingJobs = await this.ticketsQueue.getJobs(['waiting', 'active']);
+            if (pendingJobs.length > 0) {
+                this.logger.debug('Archive job already in queue, skipping', 'TicketService');
+                return;
             }
-        );
-    }
 
-    // Method for manual testing
-    async manuallyTriggerArchiveCheck() {
-        const job = await this.ticketsQueue.add('archive-inactive-tickets', {
-            timestamp: new Date(),
-            manual: true
-        });
+            const job = await this.ticketsQueue.add(
+                'archive-inactive-tickets',
+                {
+                    timestamp: new Date(),
+                    isAutomated: true
+                },
+                {
+                    attempts: 3,
+                    backoff: {
+                        type: 'exponential',
+                        delay: 60000
+                    },
+                    removeOnComplete: true,
+                    timeout: 300000 // 5 minutes timeout
+                }
+            );
 
-        return {
-            jobId: job.id,
-            status: 'queued',
-            message: 'Archive check triggered successfully'
-        };
+            const end = performance.now();
+            this.logger.log(
+                `Created archive job with ID: ${job.id} in ${(end - start).toFixed(2)}ms`,
+                'TicketService'
+            );
+        } catch (error) {
+            this.logger.error(
+                `Failed to schedule archive job: ${error.message}`,
+                error.stack,
+                'TicketService'
+            );
+        }
     }
 
     async createTicket(
@@ -89,7 +103,11 @@ export class TicketService {
         const user = await this.userRepository.findOne({ where: { id: userId } });
 
         if (!user) {
-            throw new NotFoundException('Request failed, try again later.');
+            throw new NotFoundException('Request failed at this time, please try again.');
+        }
+
+        if (user.isBlocked || !user.isActive || user.isSuspicious) {
+            throw new NotFoundException('Request failed at this time, please try again.');
         }
 
         const ticket = this.ticketRepository.create({
@@ -119,6 +137,24 @@ export class TicketService {
             message: data.message,
             attachments
         });
+
+        // add job to queue
+        await this.ticketsQueue.add(
+            'new-ticket-notification',
+            {
+                ticketId: ticket.id,
+                userId,
+                department: data.department,
+            },
+            {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 30000
+                },
+                removeOnComplete: true
+            }
+        );
 
         await this.messageRepository.save(message);
 
@@ -624,52 +660,52 @@ export class TicketService {
             sortBy = 'lastMessageAt',
             sortOrder = 'DESC'
         } = options;
-    
+
         const queryBuilder = this.ticketRepository
             .createQueryBuilder('ticket')
             .leftJoinAndSelect('ticket.messages', 'messages')
             .leftJoinAndSelect('ticket.manager', 'manager')
             .leftJoinAndSelect('messages.sender', 'sender')
             .where('ticket.userId = :userId', { userId });
-    
+
         // Handle status filter with proper type checking
         const validStatuses = (Array.isArray(status) ? status : [status])
             .filter((s): s is string => typeof s === 'string')
             .map(s => s.toUpperCase())
-            .filter((s): s is TicketStatus => 
+            .filter((s): s is TicketStatus =>
                 Object.values(TicketStatus).includes(s as TicketStatus)
             );
-    
+
         if (validStatuses.length > 0) {
             queryBuilder.andWhere('UPPER(ticket.status) IN (:...statuses)', {
                 statuses: validStatuses
             });
-    
+
             this.logger.log(
                 `Filtering tickets by status: ${validStatuses.join(', ')}`,
                 'TicketService'
             );
         }
-    
+
         // Get total count for pagination
         const total = await queryBuilder.getCount();
-    
+
         if (total === 0) {
             throw new NotFoundException(
                 `No tickets found with status: ${validStatuses.join(', ')}`
             );
         }
-    
+
         // Apply sorting
         queryBuilder.orderBy(`ticket.${sortBy}`, sortOrder);
-    
+
         // Apply pagination
         const skip = (page - 1) * limit;
         queryBuilder.skip(skip).take(limit);
-    
+
         // Execute query
         const tickets = await queryBuilder.getMany();
-    
+
         return {
             tickets,
             total,
@@ -698,7 +734,7 @@ export class TicketService {
             sortBy = 'lastMessageAt',
             sortOrder = 'DESC'
         } = options;
-    
+
         const queryBuilder = this.ticketRepository
             .createQueryBuilder('ticket')
             .leftJoinAndSelect('ticket.messages', 'messages')
@@ -708,24 +744,24 @@ export class TicketService {
             .andWhere('UPPER(ticket.status) IN (:...statuses)', {
                 statuses: [TicketStatus.RESOLVED, TicketStatus.ARCHIVED]
             });
-    
+
         // Get total count
         const total = await queryBuilder.getCount();
-    
+
         if (total === 0) {
             throw new NotFoundException('No archived tickets found');
         }
-    
+
         // Apply sorting
         queryBuilder.orderBy(`ticket.${sortBy}`, sortOrder);
-    
+
         // Apply pagination
         const skip = (page - 1) * limit;
         queryBuilder.skip(skip).take(limit);
-    
+
         // Execute query
         const tickets = await queryBuilder.getMany();
-    
+
         return {
             tickets,
             total,
@@ -756,50 +792,50 @@ export class TicketService {
             sortBy = 'lastMessageAt',
             sortOrder = 'DESC'
         } = options;
-    
+
         const queryBuilder = this.ticketRepository
             .createQueryBuilder('ticket')
             .leftJoinAndSelect('ticket.messages', 'messages')
             .leftJoinAndSelect('ticket.user', 'user')
             .leftJoinAndSelect('messages.sender', 'sender')
             .where('ticket.managerId = :managerId', { managerId });
-    
+
         // Handle status filter
         if (status.length > 0) {
             queryBuilder.andWhere('UPPER(ticket.status) IN (:...statuses)', {
                 statuses: status.map(s => s.toUpperCase())
             });
-    
+
             this.logger.log(
                 `Filtering assigned tickets by status: ${status.join(', ')}`,
                 'TicketService'
             );
         }
-    
+
         // Get total count for pagination
         const total = await queryBuilder.getCount();
-    
+
         if (total === 0) {
             throw new NotFoundException(
                 `No tickets assigned to you${status.length > 0 ? ` with status: ${status.join(', ')}` : ''}`
             );
         }
-    
+
         // Apply sorting
         queryBuilder.orderBy(`ticket.${sortBy}`, sortOrder);
-    
+
         // Apply pagination
         const skip = (page - 1) * limit;
         queryBuilder.skip(skip).take(limit);
-    
+
         // Execute query
         const tickets = await queryBuilder.getMany();
-    
+
         this.logger.log(
             `Retrieved ${tickets.length} assigned tickets for manager ${managerId}`,
             'TicketService'
         );
-    
+
         return {
             tickets,
             total,
@@ -829,7 +865,7 @@ export class TicketService {
             sortBy = 'createdAt',
             sortOrder = 'ASC' // Show oldest first by default
         } = options;
-    
+
         const queryBuilder = this.ticketRepository
             .createQueryBuilder('ticket')
             .leftJoinAndSelect('ticket.messages', 'messages')
@@ -839,7 +875,7 @@ export class TicketService {
             .andWhere('ticket.status IN (:...statuses)', {
                 statuses: [TicketStatus.ACTIVE, TicketStatus.OPEN, TicketStatus.IN_PROGRESS] // Only show active/open tickets
             });
-    
+
         // Apply department filter if provided
         if (department) {
             queryBuilder.andWhere('ticket.department = :department', { department });
@@ -848,31 +884,31 @@ export class TicketService {
                 'TicketService'
             );
         }
-    
+
         // Get total count for pagination
         const total = await queryBuilder.getCount();
-    
+
         if (total === 0) {
             throw new NotFoundException(
                 `No unassigned tickets found${department ? ` in ${department} department` : ''}`
             );
         }
-    
+
         // Apply sorting
         queryBuilder.orderBy(`ticket.${sortBy}`, sortOrder);
-    
+
         // Apply pagination
         const skip = (page - 1) * limit;
         queryBuilder.skip(skip).take(limit);
-    
+
         // Execute query
         const tickets = await queryBuilder.getMany();
-    
+
         this.logger.log(
             `Retrieved ${tickets.length} unassigned tickets${department ? ` from ${department} department` : ''}`,
             'TicketService'
         );
-    
+
         return {
             tickets,
             total,
@@ -902,7 +938,7 @@ export class TicketService {
             sortBy = 'createdAt',
             sortOrder = 'ASC' // Show oldest first by default
         } = options;
-    
+
         const queryBuilder = this.ticketRepository
             .createQueryBuilder('ticket')
             .leftJoinAndSelect('ticket.messages', 'messages')
@@ -910,7 +946,7 @@ export class TicketService {
             .leftJoinAndSelect('ticket.manager', 'manager')
             .leftJoinAndSelect('messages.sender', 'sender')
             .where('ticket.status = :status', { status: TicketStatus.OPEN });
-    
+
         // Apply department filter if provided
         if (department) {
             queryBuilder.andWhere('ticket.department = :department', { department });
@@ -919,31 +955,31 @@ export class TicketService {
                 'TicketService'
             );
         }
-    
+
         // Get total count for pagination
         const total = await queryBuilder.getCount();
-    
+
         if (total === 0) {
             throw new NotFoundException(
                 `No open tickets found${department ? ` in ${department} department` : ''}`
             );
         }
-    
+
         // Apply sorting
         queryBuilder.orderBy(`ticket.${sortBy}`, sortOrder);
-    
+
         // Apply pagination
         const skip = (page - 1) * limit;
         queryBuilder.skip(skip).take(limit);
-    
+
         // Execute query
         const tickets = await queryBuilder.getMany();
-    
+
         this.logger.log(
             `Retrieved ${tickets.length} open tickets${department ? ` from ${department} department` : ''}`,
             'TicketService'
         );
-    
+
         return {
             tickets,
             total,
@@ -951,27 +987,4 @@ export class TicketService {
             currentPage: page
         };
     }
-
-
 }
-
-
-
-// CREATE TICKET - DONE
-// ASSIGN TICKET TO MANAGER OR REASSIGN ITSELF - DONE
-// GET TICKET DETAILS - DONE
-// REPLY TO A TICKET - DONE
-// REASSIGN TICKET - DONE
-// READ ATTACHMENT - DONE
-// DOWNLOAD ATTACHMENT - DONE
-// CHANGE TICKET STATUS - DONE
-// GET ALL TICKETS - DONE
-
-// GET ALL TICKETS TO A CLIENT, ACTIVE AND ARCHIVED - DONE
-// GET ALL TICKETS ASSIGNED TO ME - DONE
-// GET ALL UNASSIGNED TICKETS - DONE
-// GET ALL INCIDENTS
-// ISSUE TYPE: IT HELP, REQUEST OF CHANGE, REPORT AN INCIDENT, REQUEST NEW ACCOUNT, PROBLEM
-// MOVE TICKET TO ARCHIVE TICKETS AS REFERENCE
-// AFTER 1 MONTH AUTOMATICALLY MOVE TICKET TO ARCHIVE
-// ALL OPEN TICKETS - DONE

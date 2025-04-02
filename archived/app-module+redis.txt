@@ -13,6 +13,8 @@ import { APP_FILTER } from '@nestjs/core';
 import { AppLoggerService } from './modules/logger/logger.service';
 import { NotificationModule } from './modules/notifications/notification.module';
 import { TicketModule } from './modules/ticket/ticket.module';
+import { RedisModule } from './modules/redis/redis.module';
+import { RedisService } from './modules/redis/redis.service';
 
 @Module({
   imports: [
@@ -33,6 +35,7 @@ import { TicketModule } from './modules/ticket/ticket.module';
       rootPath: join(__dirname, '..', 'uploads'),
     }),
     LoggerModule,
+    RedisModule
   ],
   providers: [
     {
@@ -44,11 +47,13 @@ import { TicketModule } from './modules/ticket/ticket.module';
 export class AppModule implements OnModuleInit {
   constructor(
     private readonly logger: AppLoggerService,
+    private readonly redisService: RedisService
   ) {}
 
   async onModuleInit() {
     this.logger.log('Application starting...', 'AppModule');
     await this.validateConfigurations();
+    await this.validateRedisConnection();
     this.logger.log('Application initialized successfully', 'AppModule');
   }
 
@@ -92,6 +97,24 @@ export class AppModule implements OnModuleInit {
     } catch (error) {
       this.logger.error(
         'Failed to validate configurations',
+        error.stack,
+        'AppModule'
+      );
+      process.exit(1);
+    }
+  }
+
+  private async validateRedisConnection(): Promise<void> {
+    try {
+      const isHealthy = await this.redisService.isHealthy();
+      if (!isHealthy) {
+        this.logger.error('Redis connection health check failed', undefined, 'AppModule');
+        process.exit(1);
+      }
+      this.logger.log('Redis connection validated successfully', 'AppModule');
+    } catch (error) {
+      this.logger.error(
+        'Failed to validate Redis connection',
         error.stack,
         'AppModule'
       );

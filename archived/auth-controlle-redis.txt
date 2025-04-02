@@ -1,0 +1,10 @@
+ // @Get('self')
+    // @ApiResponse({
+    //     status: 200,
+    //     description: 'Successfully retrieved details',
+    //     type: Object,
+    // })
+    // @UseGuards(AuthGuard)
+    // async getSelf(@Req() req: Request): Promise<any> {
+    //     return await this.authService.getUserData(req['user'].id);
+    // }

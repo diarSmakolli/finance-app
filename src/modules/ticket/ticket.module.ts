@@ -12,9 +12,12 @@ import { Session } from '../users/entities/session.entity';
 import { multerConfig } from '../../config/multer.config';
 import { BullModule } from '@nestjs/bull';
 import { TicketArchiveProcessor } from './processors/ticket-archive.processor';
+import { ScheduleModule } from '@nestjs/schedule';
+import { Notification } from '../notifications/notification.entity';
 @Module({
     imports: [
-        TypeOrmModule.forFeature([Ticket, TicketMessage, User, Session]),
+        ScheduleModule.forRoot(),
+        TypeOrmModule.forFeature([Ticket, TicketMessage, User, Session, Notification]),
         MulterModule.register(multerConfig),
         JwtModule.register({
             secret: process.env.JWT_SECRET || 'cdcdcdc123453',

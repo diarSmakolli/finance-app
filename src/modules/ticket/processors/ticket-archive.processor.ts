@@ -1,29 +1,36 @@
 import { Process, Processor, OnQueueActive, OnQueueCompleted, OnQueueFailed } from '@nestjs/bull';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan, Not } from 'typeorm';
+import { Repository, LessThan, Not, In } from 'typeorm';
 import { Ticket } from '../entities/ticket.entity';
 import { TicketMessage } from '../entities/ticket-massage.entity';
 import { TicketStatus } from '../ticket.service';
 import { AppLoggerService } from '../../logger/logger.service';
 import { Job } from 'bull';
+import { User } from 'src/modules/users/entities/user.entity';
+import { Notification } from 'src/modules/notifications/notification.entity';
 
-@Processor('tickets')
+
 @Injectable()
+@Processor('tickets')
 export class TicketArchiveProcessor {
     constructor(
         @InjectRepository(Ticket)
         private ticketRepository: Repository<Ticket>,
         @InjectRepository(TicketMessage)
         private messageRepository: Repository<TicketMessage>,
-        private readonly logger: AppLoggerService
+        @InjectRepository(User)
+        private userRepository: Repository<User>,
+        @InjectRepository(Notification)
+        private notificationRepository: Repository<Notification>,
+        private readonly logger: AppLoggerService,
     ) {}
 
     @OnQueueActive()
     onActive(job: Job) {
         this.logger.log(
             `Processing job ${job.id} of type ${job.name}`,
-            'TicketArchiveProcessor'
+            'TicketProcessor'
         );
     }
 
@@ -31,7 +38,7 @@ export class TicketArchiveProcessor {
     onComplete(job: Job, result: any) {
         this.logger.log(
             `Job ${job.id} completed. Archived ${result.archived} tickets`,
-            'TicketArchiveProcessor'
+            'TicketProcessor'
         );
     }
 
@@ -40,7 +47,7 @@ export class TicketArchiveProcessor {
         this.logger.error(
             `Failed job ${job.id}: ${error.message}`,
             error.stack,
-            'TicketArchiveProcessor'
+            'Ticker processor'
         );
     }
 
@@ -107,4 +114,66 @@ export class TicketArchiveProcessor {
             throw error;
         }
     }
+
+    @Process('new-ticket-notification')
+    async processNewTicketNotification(job: Job<{ ticketId: string; userId: string; department: string }>) {
+        const start = performance.now();
+        try {
+            const { ticketId, userId, department } = job.data;
+
+            // Get ticket details
+            const ticket = await this.ticketRepository.findOne({
+                where: { id: ticketId },
+                relations: ['user']
+            });
+
+            if (!ticket) {
+                throw new Error(`Ticket not found: ${ticketId}`);
+            }
+
+            // Find all admin users to notify
+            const adminUsers = await this.userRepository.find({
+                where: {
+                    role: In(['administration', 'sysadmin', 'infrastructure', 'wsadmin']),
+                    isActive: true,
+                    isBlocked: false
+                }
+            });
+
+            // Create notifications array
+            const notifications = adminUsers.map(admin => 
+                this.notificationRepository.create({
+                    userId: admin.id,
+                    title: 'New Support Ticket',
+                    message: `New ticket #${ticket.id} created in ${department} department by ${ticket.user.firstName} ${ticket.user.lastName}`,
+                    read: false,
+                })
+            );
+
+            // Save all notifications
+            await this.notificationRepository.save(notifications);
+
+            const end = performance.now();
+            this.logger.log(
+                `Created ${notifications.length} notifications for ticket ${ticketId} in ${(end - start).toFixed(2)}ms`,
+                'TicketProcessor'
+            );
+
+            return {
+                success: true,
+                notificationsCreated: notifications.length,
+                notifiedRoles: adminUsers.map(user => user.role),
+                processingTime: `${(end - start).toFixed(2)}ms`
+            };
+
+        } catch (error) {
+            this.logger.error(
+                `Error creating ticket notifications: ${error.message}`,
+                error.stack,
+                'TicketProcessor'
+            );
+            throw error;
+        }
+    }
+    
 }

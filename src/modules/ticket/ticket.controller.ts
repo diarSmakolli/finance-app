@@ -212,18 +212,6 @@ export class TicketController {
         };
     }
 
-    @Post('archive/check')
-    @ApiOperation({ summary: 'Manually trigger inactive tickets check' })
-    @ApiResponse({ status: 200, description: 'Archive check triggered' })
-    async triggerArchiveCheck() {
-        const result = await this.ticketService.manuallyTriggerArchiveCheck();
-        return {
-            status: 'success',
-            code: '200',
-            message: 'Archive check triggered successfully',
-            data: result
-        };
-    }
    
     @Get()
     @ApiOperation({ summary: 'List tickets with pagination and filters' })
@@ -313,7 +301,7 @@ export class TicketController {
     ) {
         const message = await this.ticketService.addMessage(
             ticketId,
-            req.user.id, // Use authenticated user's ID instead of path parameter
+            req.user.id,
             data,
             files
         );

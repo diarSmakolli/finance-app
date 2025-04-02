@@ -20,9 +20,13 @@ import { CookieOptions } from 'express';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AppLoggerService } from '../logger/logger.service';
 import { Notification } from '../notifications/notification.entity';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class AuthService {
+    private readonly USER_CACHE_TTL = 3600;
+    private readonly USER_CACHE_PREFIX = 'user:';
+
     constructor(
         @InjectRepository(User)
         private readonly userRepository: Repository<User>,
@@ -36,7 +40,12 @@ export class AuthService {
         private readonly emailService: EmailService,
         private readonly eventEmitter: EventEmitter2,
         private readonly logger: AppLoggerService,
+        private readonly redisService: RedisService
     ) { }
+
+    private getUserCacheKey(userId: string): string {
+        return `${this.USER_CACHE_PREFIX}${userId}`;
+    }
 
     async signUp(userDto: CreateUserDto): Promise<any> {
         this.logger.log('Starting processing request', 'AuthService.signUp');
@@ -293,11 +302,19 @@ export class AuthService {
 
         const userResponse = ResponseUserDto.fromEntity(user);
 
+        // await this.redisService.set(
+        //     this.getUserCacheKey(user.id),
+        //     userResponse,
+        //     this.USER_CACHE_TTL
+        // );
+
         await Promise.all([
             this.loginHistoryRepository.save(loginHistoryData),
             this.sessionRepository.save(session),
             this.userRepository.save(user),
         ]);
+
+        // this.logger.debug(`Cached user data for: ${user.id}`, 'AuthService.signIn');
 
         return {
             status: 'success',
@@ -310,6 +327,58 @@ export class AuthService {
         }
     };
 
+    // cached user
+    async getUserData(userId: string): Promise<any> {
+        const start = performance.now();
+    
+        // Try to get from cache first
+        const cachedUser = await this.redisService.get(this.getUserCacheKey(userId));
+        
+        if (cachedUser) {
+            const end = performance.now();
+            this.logger.debug(`Cache HIT - Retrieved user in ${(end - start).toFixed(2)}ms`, 'AuthService.getUserData');
+            
+            return {
+                status: 'success',
+                code: '200',
+                message: 'User details retrieved from cache',
+                data: {
+                    user: cachedUser
+                }
+            };
+        }
+    
+        // If not in cache, get from database
+        const user = await this.userRepository.findOne({
+            where: { id: userId }
+        });
+    
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+    
+        const userResponse = ResponseUserDto.fromEntity(user);
+        
+        // Cache the user data
+        await this.redisService.set(
+            this.getUserCacheKey(userId),
+            userResponse,
+            this.USER_CACHE_TTL
+        );
+    
+        const end = performance.now();
+        this.logger.debug(`Cache MISS - Retrieved user in ${(end - start).toFixed(2)}ms`, 'AuthService.getUserData');
+    
+        return {
+            status: 'success',
+            code: '200',
+            message: 'User details retrieved from database',
+            data: {
+                user: userResponse
+            }
+        };
+    }
+
     async signOut(req: Request & { cookies: { [key: string]: string } }, res: Response): Promise<any> {
         this.logger.log(`Start processing request.`, 'AuthService.signOut');
         const token = req.cookies['accessToken'];
@@ -318,6 +387,11 @@ export class AuthService {
         
         if (token) {
             const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+            const decoded = this.jwtService.verify(token) as { id: string };
+
+            // Clear user cache
+            await this.redisService.del(this.getUserCacheKey(decoded.id));
+            this.logger.debug(`Cleared Redis cache for user: ${decoded.id}`, 'AuthService.signOut');
 
             this.logger.debug(`
                 Hashed the token with sha256 if it compares or equals with saved on database delete it using tokenhash,
