@@ -66,6 +66,10 @@ export class TicketArchiveProcessor {
                 relations: ['messages', 'user', 'manager']
             });
 
+            if(!inactiveTickets) {
+                this.logger.log(`No inactive tickets has been found.`);
+            }
+
             this.logger.log(
                 `Found ${inactiveTickets.length} inactive tickets to archive`,
                 'TicketArchiveProcessor'
@@ -121,7 +125,7 @@ export class TicketArchiveProcessor {
         try {
             const { ticketId, userId, department } = job.data;
 
-            // Get ticket details
+            
             const ticket = await this.ticketRepository.findOne({
                 where: { id: ticketId },
                 relations: ['user']
@@ -131,7 +135,7 @@ export class TicketArchiveProcessor {
                 throw new Error(`Ticket not found: ${ticketId}`);
             }
 
-            // Find all admin users to notify
+            
             const adminUsers = await this.userRepository.find({
                 where: {
                     role: In(['administration', 'sysadmin', 'infrastructure', 'wsadmin']),
@@ -140,17 +144,18 @@ export class TicketArchiveProcessor {
                 }
             });
 
-            // Create notifications array
+            
             const notifications = adminUsers.map(admin => 
                 this.notificationRepository.create({
                     userId: admin.id,
                     title: 'New Support Ticket',
-                    message: `New ticket #${ticket.id} created in ${department} department by ${ticket.user.firstName} ${ticket.user.lastName}`,
+                    message: `New ticket #${ticket.id} created in ${department} department by ${ticket.user.firstName} 
+                    ${ticket.user.lastName}`,
                     read: false,
                 })
             );
 
-            // Save all notifications
+            
             await this.notificationRepository.save(notifications);
 
             const end = performance.now();
@@ -165,7 +170,6 @@ export class TicketArchiveProcessor {
                 notifiedRoles: adminUsers.map(user => user.role),
                 processingTime: `${(end - start).toFixed(2)}ms`
             };
-
         } catch (error) {
             this.logger.error(
                 `Error creating ticket notifications: ${error.message}`,
@@ -174,6 +178,187 @@ export class TicketArchiveProcessor {
             );
             throw error;
         }
+    }
+
+    @Process('ticket-assignment-notification')
+    async processTicketAssignmentNotification(job: Job<{
+        ticketId: string;
+        managerId: string;
+        assignedBy: string;
+        department: string;
+    }>) {
+        const start = performance.now();
+        try {
+            const { ticketId, managerId, assignedBy, department } = job.data;
+
+            const [ticket, manager, assigner] = await Promise.all([
+                this.ticketRepository.findOne({
+                    where: { id: ticketId },
+                    relations: ['user'],
+                    select: ['id', 'subject', 'department', 'user']
+                }),
+                this.userRepository.findOne({
+                    where: { id: managerId },
+                    select: ['id', 'firstName', 'lastName', 'email']
+                }),
+                this.userRepository.findOne({
+                    where: { id: assignedBy },
+                    select: ['id', 'firstName', 'lastName']
+                })
+            ]);
+
+
+            if (!ticket || !manager || !assigner) {
+                throw new Error('Required data not found');
+            }
+
+            const notifications = [
+                {
+                    userId: managerId,
+                    title: 'New ticket Assignment',
+                    message: `Ticket #${ticketId} has been assigned to you by ${assigner.firstName} ${assigner.lastName}`,
+                    read: false,
+                },
+                // notify the client, creator of ticket.
+                {
+                    userId: ticket.user.id,
+                    title: 'Ticket Update!',
+                    message: `Your ticket #${ticketId} has been assigned to specific team and you will get a reply as soon as possible.`,
+                    read: false,
+                }
+            ];
+
+            await this.notificationRepository.save(notifications);
+
+            const end = performance.now();
+
+            this.logger.log(
+                `Processed processTicketAssignmentNotification ${notifications.length} notifications for ticket ${ticketId} in ${(end - start).toFixed(2)}ms`,
+                'TicketProcessor'
+            );
+
+            return {
+                success: true,
+                notificationsCreated: notifications.length,
+                processingTime: `${(end - start).toFixed(2)}ms`
+            };
+        } catch(error) {
+            this.logger.error(
+                `Failed to process ticket assignment job in queue: ${error.message}`, 
+                error.stack, 'TicketProcessor'
+            );
+            throw error;
+        }
+        
+    }
+
+    @Process('new-message-notification')
+    async processNewReplyMessageNotification(job: Job<{
+        ticketId: string;
+        messageId: string;
+        senderId: string;
+        isFromClient: boolean;
+        department: string
+    }>) {
+        const start = performance.now();
+        try {
+            const { ticketId, messageId, senderId, isFromClient, department } = job.data;
+
+            const [ticket, message, sender] = await Promise.all([
+                this.ticketRepository.findOne({
+                    where: { id: ticketId },
+                    relations: ['user', 'manager'],
+                    select: ['id', 'subject', 'department', 'user', 'manager']
+                }),
+                this.messageRepository.findOne({
+                    where: { id: messageId },
+                    select: ['id', 'message', 'createdAt']
+                }),
+                this.userRepository.findOne({
+                    where: { id: senderId },
+                    select: ['id', 'firstName', 'lastName', 'role']
+                })
+            ]);
+    
+            if (!ticket || !message || !sender) {
+                throw new Error('Required data not found');
+            }
+
+            interface NotificationData {
+                userId: string;
+                title: string;
+                message: string;
+                read: boolean;
+            }
+
+            let notifications: NotificationData[] = [];
+
+            // 'administration', 'sysadmin', 'infrastructure', 'wsadmin'
+
+            if (isFromClient) {
+                // Client sent message - notify manager if assigned
+                if (ticket.manager) {
+                    notifications.push({
+                        userId: ticket.manager.id,
+                        title: 'New Message in Ticket',
+                        message: `Client ${sender.firstName} ${sender.lastName} replied to ticket #${ticketId}`,
+                        read: false
+                    });
+                } else {
+                    // If no manager, notify all admins
+                    const admins = await this.userRepository.find({
+                        where: {
+                            role: In(['administration', 'sysadmin']),
+                            isActive: true,
+                            isBlocked: false
+                        },
+                        select: ['id']
+                    });
+    
+                    notifications.push(...admins.map(admin => ({
+                        userId: admin.id,
+                        title: 'New Message in Unassigned Ticket',
+                        message: `New client message in unassigned ticket #${ticketId}`,
+                        read: false
+                    })));
+                }
+            } else {
+                // Support agent sent message - notify client
+                notifications.push({
+                    userId: ticket.user.id,
+                    title: 'Support Team Reply',
+                    message: `Support team replied to your ticket #${ticketId}`,
+                    read: false
+                });
+            }
+
+            if (notifications.length > 0) {
+                await this.notificationRepository
+                    .createQueryBuilder()
+                    .insert()
+                    .into(Notification)
+                    .values(notifications)
+                    .execute();
+            }
+    
+            const end = performance.now();
+            this.logger.log(`
+                message: 'Processed message notifications',
+            }, 'TicketProcessor'`);
+    
+            return {
+                success: true,
+                notificationsCreated: notifications.length,
+                processingTime: `${(end - start).toFixed(2)}ms`
+            };
+        } catch(error) {
+            this.logger.error(
+                `Failed to process queue: ${error.message}`, 
+                error.stack, 'processNewReplyMessageNotification'
+            );
+            throw error;
+        }
+
     }
     
 }

@@ -13,6 +13,7 @@ export class TicketController {
 
     @Post()
     @UseInterceptors(FilesInterceptor('attachments', 5))
+    @UseGuards(AuthGuard)
     async createTicket(
         @Req() req: any,
         @UploadedFiles() files: Array<Express.Multer.File>,
@@ -263,9 +264,10 @@ export class TicketController {
     @ApiOperation({ summary: 'Assign ticket to support agent' })
     async assignTicket(
         @Param('id') ticketId: string,
-        @Body() data: { managerId: string }
+        @Body() data: { managerId: string },
+        @Req() req: any,
     ) {
-        const ticket = await this.ticketService.assignManager(ticketId, data.managerId);
+        const ticket = await this.ticketService.assignManager(ticketId, data.managerId, req.user.id);
         return {
             status: 'success',
             message: 'Ticket assigned successfully',

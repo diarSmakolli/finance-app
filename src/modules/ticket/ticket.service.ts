@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, UnauthorizedException, StreamableFile } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { Ticket } from './entities/ticket.entity';
 import { TicketMessage } from './entities/ticket-massage.entity';
 import { User } from '../users/entities/user.entity';
@@ -89,7 +89,8 @@ export class TicketService {
             );
         }
     }
-
+    
+    // DONE
     async createTicket(
         userId: string,
         data: {
@@ -115,30 +116,30 @@ export class TicketService {
             department: data.department,
             category: data.category,
             subject: data.subject,
-            status: TicketStatus.ACTIVE,
+            status: TicketStatus.OPEN,
             lastMessageAt: new Date()
         });
 
         await this.ticketRepository.save(ticket);
 
-        // Process attachments if any
+
         const attachments = files?.map(file => ({
             filename: file.filename,
             originalName: file.originalname,
             mimeType: file.mimetype,
             size: file.size,
-            path: `uploads/tickets/${file.filename}` // Updated path
+            path: `uploads/tickets/${file.filename}`
         })) || [];
 
-        // Create initial message with attachments
+       
         const message = this.messageRepository.create({
             ticketId: ticket.id,
-            senderId: userId,
+            senderId: user.id,
             message: data.message,
             attachments
         });
 
-        // add job to queue
+       
         await this.ticketsQueue.add(
             'new-ticket-notification',
             {
@@ -165,11 +166,25 @@ export class TicketService {
         return ticket;
     }
 
-    async assignManager(ticketId: string, managerId: string): Promise<Ticket> {
+    // DONE
+    async assignManager(ticketId: string, managerId: string, currentUserId: string): Promise<Ticket> {
         this.logger.log(`Attempting to assign ticket ${ticketId} to support agent ${managerId}`, 'TicketService');
 
-        if (!ticketId || !managerId) {
+        if (!ticketId || !managerId || !currentUserId) {
             throw new BadRequestException('Request failed, please try again.');
+        }
+
+        const currentUser = await this.userRepository.findOne({
+            where: { 
+                id: currentUserId,
+                role: In(['administration', 'sysadmin', 'infrastructure', 'wsadmin']), // Only these roles can assign
+                isActive: true,
+                isBlocked: false
+            }
+        });
+
+        if(!currentUser) {
+            throw new NotFoundException('No assignee found in our records.');
         }
 
         const ticket = await this.ticketRepository.findOne({
@@ -178,16 +193,17 @@ export class TicketService {
         });
 
         if (!ticket) {
-            throw new NotFoundException('Ticket not found');
+            throw new NotFoundException('No ticket found in our records.');
         }
 
-        if (ticket.status == 'resolved' || ticket.status == 'archived') {
-            throw new NotFoundException('Ticket already solved.');
+        if (ticket.status == 'RESOLVED' || ticket.status == 'ARCHIVED') {
+            throw new NotFoundException('Ticket already resolved/archived.');
         }
 
         const manager = await this.userRepository.findOne({
             where: {
                 id: managerId,
+                role: In(['administration', 'sysadmin', 'infrastructure', 'wsadmin']),
                 isActive: true,
                 isBlocked: false,
                 isSuspicious: false
@@ -195,30 +211,67 @@ export class TicketService {
         });
 
         if (!manager) {
-            throw new BadRequestException('Support agent not found or not available');
+            throw new BadRequestException('No person for assign found in our records.');
         }
 
         ticket.manager = manager;
         ticket.managerId = manager.id;
         ticket.status = TicketStatus.IN_PROGRESS;
+        ticket.lastMessageAt = new Date();
+
+        // Create System Message
+        const systemMessage = this.messageRepository.create({
+            ticketId: ticket.id,
+            senderId: currentUserId,
+            message: `Ticket assigned to specified team, as soon as possible you will get an reply.`,
+            isSystemMessage: true,
+            systemMessageType: 'ASSIGNMENT',
+            attachments: []
+        });
+
+        this.messageRepository.save(systemMessage);
+
+        await this.ticketsQueue.add(
+            'ticket-assignment-notification',
+            {
+                ticketId: ticket.id,
+                managerId: manager.id,
+                assignedBy: currentUserId,
+                department: ticket.department
+            },
+            {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 30000
+                },
+                removeOnComplete: true
+            }
+        );
 
         const updatedTicket = await this.ticketRepository.save(ticket);
         return updatedTicket;
     }
 
+    // DONE
     async getTicketDetails(ticketId: string): Promise<Ticket> {
+        if(!ticketId) {
+            throw new BadRequestException('Request failed at this time, please try again.');
+        }
+
         const ticket = await this.ticketRepository.findOne({
             where: { id: ticketId },
             relations: ['messages', 'messages.sender', 'manager', 'user']
         });
 
         if (!ticket) {
-            throw new NotFoundException('Ticket not found');
+            throw new NotFoundException('No ticket found in our records, please try again.');
         }
 
         return ticket;
     }
 
+    // IN PROCESS
     async addMessage(
         ticketId: string,
         senderId: string,
@@ -240,7 +293,7 @@ export class TicketService {
         });
 
         if (!ticket) {
-            throw new NotFoundException('Request failed...');
+            throw new NotFoundException('No ticket founded in our records.');
         }
 
         // Check if user is authorized to add message
@@ -271,6 +324,27 @@ export class TicketService {
         await this.ticketRepository.update(ticketId, {
             lastMessageAt: new Date()
         });
+
+
+        // add to queue
+        await this.ticketsQueue.add(
+            `new-message-notification`,
+            {
+                ticketId,
+                messageId: message.id,
+                senderId,
+                isFromClient: ticket.userId === senderId,
+                department: ticket.department
+            },
+            {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 30000,
+                },
+                removeOnComplete: true
+            }
+        );
 
         this.logger.log(
             `Message ${savedMessage.id} added to ticket ${ticketId} by user ${senderId} with ${attachments.length} attachments`,
