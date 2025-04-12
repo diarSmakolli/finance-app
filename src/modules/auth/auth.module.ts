@@ -8,19 +8,43 @@ import { LoginHistory } from '../users/entities/loginhistory.entity';
 import { Session } from '../users/entities/session.entity';
 import { EmailModule } from '../emailService/email.module';
 import { Notification } from '../notifications/notification.entity';
+import { LoggerModule } from '../logger/logger.module';
+import { BullModule } from '@nestjs/bull';
+import { SendMailAuthProcessor } from './processors/send-mail.processor';
+import { ScheduleModule } from '@nestjs/schedule';
 
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     TypeOrmModule.forFeature([User, LoginHistory, Session, Notification]),
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: '1h' }, 
     }),
-    EmailModule
+    EmailModule,
+    LoggerModule,
+    BullModule.registerQueue({
+      name: 'send-mail-auth',
+      redis: {
+        host: process.env.REDIST_HOST || 'localhost',
+        port: Number(process.env.REDIS_PORT || 6379),
+      },
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 60000,
+        },
+        removeOnComplete: true,
+      }
+    }),
   ],
   controllers: [AuthController],
-  providers: [AuthService],
+  providers: [
+    AuthService,
+    SendMailAuthProcessor
+  ],
   exports: [AuthService],
 })
 export class AuthModule {}

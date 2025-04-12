@@ -8,7 +8,7 @@ import * as bcrypt from 'bcrypt';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 import { ResponseUserDto } from '../users/dto/response-user.dto';
 import { User } from '../users/entities/user.entity';
-import { Repository, MoreThan } from 'typeorm';
+import { Repository, MoreThan, In, Not } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Response } from 'express';
 import * as crypto from 'crypto';
@@ -20,10 +20,14 @@ import { CookieOptions } from 'express';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AppLoggerService } from '../logger/logger.service';
 import { Notification } from '../notifications/notification.entity';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 @Injectable()
 export class AuthService {
     constructor(
+        @InjectQueue('send-mail-auth') private readonly sendMailQueue: Queue,
         @InjectRepository(User)
         private readonly userRepository: Repository<User>,
         @InjectRepository(Session)
@@ -36,7 +40,15 @@ export class AuthService {
         private readonly emailService: EmailService,
         private readonly eventEmitter: EventEmitter2,
         private readonly logger: AppLoggerService,
-    ) { }
+    ) {
+        this.initializeQueue();
+    }
+
+    private async initializeQueue() {
+        await this.sendMailQueue.clean(0, 'completed');
+        await this.sendMailQueue.clean(0, 'failed');
+        this.logger.log('Queue initialized and cleaned', 'AuthService');
+    }
 
     async signUp(userDto: CreateUserDto): Promise<any> {
         this.logger.log('Starting processing request', 'AuthService.signUp');
@@ -67,7 +79,7 @@ export class AuthService {
             isActive: true,
             isBlocked: false,
             role: 'client',
-            username: userDto.firstName.trim().toLowerCase() + userDto.lastName.trim().toLowerCase(),
+            username: await this.generateUsernameByEmail(userDto.email)
         });
 
         this.logger.debug(`trying to create user data to user repository: ${JSON.stringify(newUser)}`, 'AuthService.signUp');
@@ -82,10 +94,22 @@ export class AuthService {
             'AuthService.signUp'
         );
 
-        this.eventEmitter.emit('email.welcome', {
-            email: savedUser.email,
-            firstName: savedUser.firstName
-        });
+        this.sendMailQueue.add(
+            'create-client',
+            {
+                email: savedUser.email,
+                firstName: savedUser.firstName,
+                lastName: savedUser.lastName,
+            },
+            {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 30000,
+                },
+                removeOnComplete: true,
+            }
+        );
 
         this.logger.debug(`
             Created event for eventEmitter with name 'email.welcome' to 
@@ -129,22 +153,8 @@ export class AuthService {
             throw new NotFoundException('Incorrect email or password, please try again.');
         }
 
-        if(user.isBlocked) {
+        if(user.isBlocked || user.isSuspicious || !user.isActive) {
             this.logger.warn(`Account with email: ${email} is marked as blocked, user.isBlocked: ${user.isBlocked}`, 'AuthService.signIn');
-            throw new UnauthorizedException(
-                'Your account has been locked due to restrictions of our policy. Please contact support for more details.'
-            );
-        }
-
-        if(user.isSuspicious) {
-            this.logger.warn(`Account with email: ${email} is marked as suspicious, user.isSuspicious: ${user.isSuspicious}.`, 'AuthService.signIn');
-            throw new UnauthorizedException(
-                `Your account has been locked due to restrictions of our policy. Please contact support for more details.`
-            );
-        }
-
-        if(!user.isActive) {
-            this.logger.warn(`Account with email: ${email} is marked as inactive, user.isActive: ${user.isActive}`, 'AuthService.signIn');
             throw new UnauthorizedException(
                 'Your account has been locked due to restrictions of our policy. Please contact support for more details.'
             );
@@ -176,12 +186,23 @@ export class AuthService {
             user.emailVerificationExpires = verificationExpires;
 
             await this.userRepository.save(user);
-            
-            this.eventEmitter.emit('email.verification', {
-                email: user.email,
-                token: verificationToken,
-                firstName: user.firstName
-            });
+
+            this.sendMailQueue.add(
+                'email-verification',
+                {
+                    email: user.email,
+                    token: verificationToken,
+                    firstName: user.firstName
+                },
+                {
+                    attempts: 3,
+                    backoff: {
+                        type: 'exponential',
+                        delay: 30000,
+                    },
+                    removeOnComplete: true,
+                }
+            );
 
             this.logger.debug(`Event created 'email.verificaiton' to send email asynchrynously using event emmiter and
                 provided payload data: email: ${user.email}, token: ${verificationToken}, firstName: ${user.firstName}`,
@@ -241,14 +262,25 @@ export class AuthService {
                 userId: user.id,
             });
             
-            await this.notificationRepository.save(newNotification);
+            this.notificationRepository.save(newNotification);
 
-            this.eventEmitter.emit('login.new_device', {
-                email: user.email,
-                firstName: user.firstName,
-                ip: currentIp,
-                time: currentTime
-            });
+            this.sendMailQueue.add(
+                'login-new-device',
+                {
+                    email: user.email,
+                    firstName: user.firstName,
+                    ip: currentIp,
+                    time: currentTime
+                },
+                {
+                    attempts: 3,
+                    backoff: {
+                        type: 'exponential',
+                        delay: 60000,
+                    },
+                    removeOnComplete: true,
+                }
+            )
         }
 
         const payload = {
@@ -360,30 +392,16 @@ export class AuthService {
             throw new NotFoundException('If your email is registered, you will receive password reset instructions.');
         }
 
-        if(user.isBlocked) {
+        if(user.isBlocked || user.isSuspicious || !user.isActive) {
             this.logger.warn(`Account with email: ${email} is marked as blocked, user.isBlocked: ${user.isBlocked}`, 'AuthService.forgotPassword');
             throw new UnauthorizedException(
                 'Your account has been locked due to restrictions of our policy. Please contact support for more details.'
             );
         }
 
-        if(user.isSuspicious) {
-            this.logger.warn(`Account with email: ${email} is marked as suspicious, user.isSuspicious: ${user.isSuspicious}.`, 'AuthService.forgotPassword');
-            throw new UnauthorizedException(
-                `Your account has been locked due to restrictions of our policy. Please contact support for more details.`
-            );
-        }
-
-        if(!user.isActive) {
-            this.logger.warn(`Account with email: ${email} is marked as inactive, user.isActive: ${user.isActive}`, 'AuthService.forgotPassword');
-            throw new UnauthorizedException(
-                'Your account has been locked due to restrictions of our policy. Please contact support for more details.'
-            );
-        }
-        
         const resetToken = crypto.randomBytes(32).toString('hex');
         const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
-        const resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+        const resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000);
 
         this.logger.debug(`
             Generated resetoken: ${resetToken} an original token using 32 bytes,
@@ -400,11 +418,22 @@ export class AuthService {
 
         this.logger.debug(`Generated the reset link: ${resetLink}`, 'AuthService.forgotPassword');
 
-        this.eventEmitter.emit('email.forgot', {
-            email: user.email,
-            resetLink: resetLink,
-            firstName: user.firstName
-        });
+        this.sendMailQueue.add(
+            'forgot-password',
+            {
+                email: user.email,
+                resetLink: resetLink,
+                firstName: user.firstName
+            },
+            {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 30000,
+                },
+                removeOnComplete: true,
+            }
+        );
 
         this.logger.debug(`
             Event created email.forgot using eventEmmiter: and saving email: ${user.email}, resetLink: ${resetLink}, 
@@ -450,22 +479,8 @@ export class AuthService {
             throw new BadRequestException(`Link has expired, please try again.`);
         }
 
-        if(user.isBlocked) {
+        if(user.isBlocked || user.isSuspicious || !user.isActive) {
             this.logger.warn(`Account is marked as blocked, user.isBlocked: ${user.isBlocked}`, 'AuthService.resetPassword');
-            throw new UnauthorizedException(
-                'Link has expired, please try again.'
-            );
-        }
-
-        if(user.isSuspicious) {
-            this.logger.warn(`Account is marked as suspicious, user.isSuspicious: ${user.isSuspicious}.`, 'AuthService.resetPassword');
-            throw new UnauthorizedException(
-                `Link has expired, please try again.`
-            );
-        }
-
-        if(!user.isActive) {
-            this.logger.warn(`Account is marked as inactive, user.isActive: ${user.isActive}`, 'AuthService.resetPassword');
             throw new UnauthorizedException(
                 'Link has expired, please try again.'
             );
@@ -481,12 +496,22 @@ export class AuthService {
 
         await this.userRepository.save(user);
         await this.sessionRepository.delete({ userId: user.id });
-        
 
-        this.eventEmitter.emit('email.password_changed', {
-            email: user.email,
-            firstName: user.firstName
-        });
+        this.sendMailQueue.add(
+            'reset-password',
+            {
+                email: user.email,
+                firstName: user.firstName
+            },
+            {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 30000,
+                },
+                removeOnComplete: true,
+            }
+        );
 
         const newNotification = this.notificationRepository.create({
             title: "Your password has been changed",
@@ -558,6 +583,18 @@ export class AuthService {
         user.emailVerificationToken = null;
         user.emailVerificationExpires = null;
 
+        this.sendMailQueue.add('account-verified', {
+            email: user.email,
+            firstName: user.firstName
+        }, {
+            attempts: 3,
+            backoff: {
+                type: 'exponential',
+                delay: 30000,
+            },
+            removeOnComplete: true,
+        });
+
         await this.userRepository.save(user);
 
         return {
@@ -614,10 +651,21 @@ export class AuthService {
             this.sessionRepository.delete({ userId: user.id })
         ]);
 
-        this.eventEmitter.emit('email.password_changed', {
-            email: user.email,
-            firstName: user.firstName
-        });
+        this.sendMailQueue.add(
+            'reset-password',
+            {
+                email: user.email,
+                firstName: user.firstName
+            },
+            {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 30000,
+                },
+                removeOnComplete: true,
+            }
+        );
 
         const newNotification = this.notificationRepository.create({
             title: "Your password has been changed",
@@ -638,4 +686,18 @@ export class AuthService {
             message: 'Password changed successfully. Please login again.'
         };
     }; 
+
+    async generateUsernameByEmail(email: string): Promise<string> {
+        const emailPrefix = email.split('@')[0].toLowerCase();
+        let finalUsername = emailPrefix;
+        let counter = 0;
+    
+        while (await this.userRepository.findOne({ where: { username: finalUsername } })) {
+            counter++;
+            finalUsername = `${emailPrefix}${Math.floor(1000 + Math.random() * 9000)}`;
+        }
+    
+        return finalUsername;
+    }
+
 }
