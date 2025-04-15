@@ -3,10 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Notification } from './notification.entity';
 import { AppLoggerService } from '../logger/logger.service';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 
 @Injectable()
 export class NotificationService {
     constructor(
+        @InjectQueue('mark-notifications') private readonly markNotificationsQueue: Queue,
         @InjectRepository(Notification)
         private notificationRepository: Repository<Notification>,
         private readonly logger: AppLoggerService
@@ -14,9 +17,20 @@ export class NotificationService {
 
     async getAllByUserId(
         userId: string,
-        page: number = 1,
-        limit: number = 10
+        options: {
+            page?: number;
+            limit?: number;
+            sortBy?: string;
+            sortOrder?: 'ASC' | 'DESC';
+        } = {}
     ): Promise<any> {
+        const { 
+            page = 1,
+            limit = 10,
+            sortBy = 'createdAt',
+            sortOrder = 'DESC'
+        } = options;
+
         this.logger.log(
             `Fetching notifications for user ${userId} (page: ${page}, limit: ${limit})`,
             'NotificationService.getAllByUserId'
@@ -27,27 +41,19 @@ export class NotificationService {
             throw new BadRequestException('Request failed at this time, please try again later.');
         }
     
-        // Calculate skip for pagination
-        const skip = (page - 1) * limit;
     
-        // Get total count for pagination
-        const total = await this.notificationRepository.count({
-            where: { userId }
-        });
-    
-        this.logger.log(
-            `Found total of ${total} notifications for user ${userId}`,
-            'NotificationService.getAllByUserId'
-        );
-    
-        const notifications = await this.notificationRepository.find({
-            where: { userId },
-            order: { createdAt: 'DESC' },
-            skip,
+        const [notifications, total] = await this.notificationRepository.findAndCount({
+            where: { 
+                userId 
+            },
+            order: { 
+                [sortBy]: sortOrder
+            },
+            skip: (page - 1) * limit,
             take: limit
         });
     
-        if(!notifications.length) {
+        if(!notifications.length || total === 0) {
             this.logger.warn(
                 `No notifications found for user ${userId} on page ${page}`,
                 'NotificationService.getAllByUserId'
@@ -55,10 +61,10 @@ export class NotificationService {
             throw new NotFoundException('No notifications founded in our records.');
         }
     
-        const totalPages = Math.ceil(total / limit);
+        const pages = Math.ceil(total / limit);
     
         this.logger.log(
-            `Retrieved ${notifications.length} notifications for user ${userId} (page ${page}/${totalPages})`,
+            `Retrieved ${notifications.length} notifications for user ${userId} (page ${page}/${pages})`,
             'NotificationService.getAllByUserId'
         );
     
@@ -66,14 +72,11 @@ export class NotificationService {
             status: 'success',
             code: '200',
             message: 'Notifications retrieved successfully.',
-            data: { 
+            data: {
                 notifications,
-                pagination: {
-                    total,
-                    page,
-                    limit,
-                    totalPages
-                }
+                total,
+                pages,
+                currentPage: page
             }
         };
     }
@@ -95,6 +98,10 @@ export class NotificationService {
         const unreadCount = await this.notificationRepository.count({
             where: { userId, read: false }
         });
+
+        if(!unreadCount) {
+            throw new NotFoundException('No notifications founded in our records.');
+        }
 
         this.logger.log(
             `Found ${unreadCount} unread notifications for user ${userId}`,
@@ -133,7 +140,7 @@ export class NotificationService {
             take: limit
         });
     
-        if (!notifications.length) {
+        if (!notifications || notifications.length === 0) {
             this.logger.warn(
                 `No recent notifications found for user ${userId}`,
                 'NotificationService.getRecentNotifications'
@@ -172,7 +179,10 @@ export class NotificationService {
         }
     
         const notification = await this.notificationRepository.findOne({
-            where: { id: notificationId, userId },
+            where: { 
+                id: notificationId, 
+                userId: userId
+            },
         });
     
         if (!notification) {
@@ -212,11 +222,10 @@ export class NotificationService {
             throw new BadRequestException('Request failed at this time, please try again later.');
         }
     
-        // First find the notification
         const notification = await this.notificationRepository.findOne({
             where: { 
                 id: notificationId,
-                userId 
+                userId: userId
             }
         });
     
@@ -264,6 +273,7 @@ export class NotificationService {
         };
     }
 
+    // WORKING
     async markAllAsRead(userId: string): Promise<any> {
         this.logger.log(
             `Attempting to mark all unread notifications as read for user ${userId}`,
@@ -277,24 +287,41 @@ export class NotificationService {
             );
             throw new BadRequestException('Request failed at this time, please try again.');
         }
-    
-        const result = await this.notificationRepository.update(
-            { userId, read: false },
-            { read: true }
-        );
-    
-        this.logger.log(
-            `Marked ${result.affected} notifications as read for user ${userId}`,
-            'NotificationService.markAllAsRead'
+
+        // const queryBuilder = this.notificationRepository.createQueryBuilder()
+        //     .update()
+        //     .set({ read: true })
+        //     .where("userId = :userId", { userId })
+        //     .andWhere("read = false");
+        
+        
+        // let result = await queryBuilder.execute();
+
+        // const updatedCount = result.affected ?? 0;
+
+        // this.logger.log(
+        //     `Marked ${result.affected} notifications as read for user ${userId}`,
+        //     'NotificationService.markAllAsRead'
+        // );
+
+        this.markNotificationsQueue.add(
+            'markAllAsRead', {
+                userId
+            },
+            {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 5000,
+                },
+                removeOnComplete: true
+            }
         );
     
         return {
             status: 'success',
             code: '200',
-            message: 'All notifications marked as read successfully.',
-            data: {
-                updatedCount: result.affected
-            }
+            message: 'Notifications has been processed.',
         }
     }
 

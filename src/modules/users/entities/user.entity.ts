@@ -99,6 +99,18 @@ export class User {
         default: Gender.PREFER_NOT_TO_SAY
     })
     gender: Gender;
+
+    @Column({ nullable: true })
+    provider: string;
+
+    @Column({ nullable: true })
+    providerId: string;  
+    
+    @Column({ nullable: true })
+    oauthAccessToken: string;
+
+    @Column({ nullable: true })
+    oauthRefreshToken: string;
     
     @OneToMany(() => LoginHistory, loginHistory => loginHistory.user)
     loginHistories: LoginHistory[];

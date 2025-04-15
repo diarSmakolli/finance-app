@@ -1,0 +1,67 @@
+// async getActiveSessions(
+  //   userId: string,
+  //   options: {
+  //     page?: number;
+  //     limit?: number;
+  //     sortBy?: string;
+  //     sortOrder?: 'ASC' | 'DESC';
+  //   } = {}
+  // )
+  // // : Promise<{
+  // //   sessions: Session[];
+  // //   total: number;
+  // //   pages: number;
+  // //   currentPage: number;
+  // // }>
+  // : Promise<any>  
+  // {
+  //   const {
+  //     page = 1,
+  //     limit = 10,
+  //     sortBy = 'createdAt',
+  //     sortOrder = 'DESC'
+  //   } = options;
+
+  //   this.logger.log(`Start processing request.`, 'UsersService.getActiveSessions');
+
+  //   const user = await this.usersRepository.findOne({
+  //       where: { id: userId }
+  //   });
+
+  //   if (!user) {
+  //       this.logger.warn(`User with id ${userId} not found.`, 'UsersService.getActiveSessions');
+  //       throw new NotFoundException('Cannot process this request at this time, please try again later!');
+  //   }
+
+  //   if (!user.isActive || user.isBlocked || user.isSuspicious) {
+  //       this.logger.warn(
+  //           `User ${userId} status check failed: isActive=${user.isActive}, isBlocked=${user.isBlocked}, isSuspicious=${user.isSuspicious}`,
+  //           'UsersService.getActiveSessions'
+  //       );
+  //       throw new UnauthorizedException('Cannot process this request at this time, please try again later!');
+  //   }
+
+  //   const activeSessions = await this.sessionRepository.find({
+  //       where: {
+  //           userId: user.id,
+  //           expiredAt: MoreThan(new Date())
+  //       },
+  //       order: {
+  //           createdAt: 'DESC'
+  //       }
+  //   });
+
+  //   this.logger.debug(
+  //       `Found ${activeSessions.length} active sessions for user ${userId}`,
+  //       'UsersService.getActiveSessions'
+  //   );
+
+  //   return {
+  //       status: 'success',
+  //       code: '200',
+  //       message: 'Active sessions retrieved successfully',
+  //       data: {
+  //           sessions: activeSessions
+  //       }
+  //   };
+  // }

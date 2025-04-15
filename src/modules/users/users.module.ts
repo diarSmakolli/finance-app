@@ -7,7 +7,6 @@ import { JwtModule } from '@nestjs/jwt';
 import { Session } from './entities/session.entity';
 import { LoginHistory } from './entities/loginhistory.entity';
 import { MulterModule } from '@nestjs/platform-express';
-import { join } from 'path';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 

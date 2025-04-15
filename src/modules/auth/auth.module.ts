@@ -12,11 +12,12 @@ import { LoggerModule } from '../logger/logger.module';
 import { BullModule } from '@nestjs/bull';
 import { SendMailAuthProcessor } from './processors/send-mail.processor';
 import { ScheduleModule } from '@nestjs/schedule';
-
-
+import { GoogleStrategy } from './strategies/google.strategy';
+import { PassportModule } from '@nestjs/passport';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    PassportModule,
     TypeOrmModule.forFeature([User, LoginHistory, Session, Notification]),
     JwtModule.register({
       secret: process.env.JWT_SECRET,
@@ -43,7 +44,8 @@ import { ScheduleModule } from '@nestjs/schedule';
   controllers: [AuthController],
   providers: [
     AuthService,
-    SendMailAuthProcessor
+    SendMailAuthProcessor,
+    GoogleStrategy
   ],
   exports: [AuthService],
 })

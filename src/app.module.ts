@@ -4,7 +4,6 @@ import { databaseConfig } from './config/database.config';
 import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { EmailModule } from './modules/emailService/email.module';
-import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { LoggerModule } from './modules/logger/logger.module';
@@ -22,12 +21,6 @@ import { TicketModule } from './modules/ticket/ticket.module';
     EmailModule,
     NotificationModule,
     TicketModule,
-    EventEmitterModule.forRoot({
-      wildcard: false,
-      delimiter: '.',
-      maxListeners: 10,
-      verboseMemoryLeak: true,
-    }),
     ServeStaticModule.forRoot({
       serveRoot: '/uploads',
       rootPath: join(__dirname, '..', 'uploads'),

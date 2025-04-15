@@ -17,7 +17,6 @@ import { EmailService } from '../emailService/email.service';
 import { Session } from '../users/entities/session.entity';
 import { LoginHistory } from '../users/entities/loginhistory.entity';
 import { CookieOptions } from 'express';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AppLoggerService } from '../logger/logger.service';
 import { Notification } from '../notifications/notification.entity';
 import { InjectQueue } from '@nestjs/bull';
@@ -37,8 +36,6 @@ export class AuthService {
         @InjectRepository(Notification)
         private readonly notificationRepository: Repository<Notification>,
         private readonly jwtService: JwtService,
-        private readonly emailService: EmailService,
-        private readonly eventEmitter: EventEmitter2,
         private readonly logger: AppLoggerService,
     ) {
         this.initializeQueue();
@@ -49,6 +46,8 @@ export class AuthService {
         await this.sendMailQueue.clean(0, 'failed');
         this.logger.log('Queue initialized and cleaned', 'AuthService');
     }
+
+    
 
     async signUp(userDto: CreateUserDto): Promise<any> {
         this.logger.log('Starting processing request', 'AuthService.signUp');
@@ -112,7 +111,7 @@ export class AuthService {
         );
 
         this.logger.debug(`
-            Created event for eventEmitter with name 'email.welcome' to 
+            Created event for job with name 'email.welcome' to 
             send email to client welcome email and send
             in payload email: ${savedUser.email}, and first name: ${savedUser.firstName}`, 
             'AuthService.signUp'
@@ -436,7 +435,7 @@ export class AuthService {
         );
 
         this.logger.debug(`
-            Event created email.forgot using eventEmmiter: and saving email: ${user.email}, resetLink: ${resetLink}, 
+            Event created email.forgot using job: and saving email: ${user.email}, resetLink: ${resetLink}, 
             firstName: ${user.firstName} in payload.`, 'AuthService.forgotPassword.'
         );
 
@@ -685,7 +684,7 @@ export class AuthService {
             code: '200',
             message: 'Password changed successfully. Please login again.'
         };
-    }; 
+    };
 
     async generateUsernameByEmail(email: string): Promise<string> {
         const emailPrefix = email.split('@')[0].toLowerCase();
@@ -698,6 +697,29 @@ export class AuthService {
         }
     
         return finalUsername;
+    }
+
+    async findUserById(id: string): Promise<any> {
+        if(!id) {
+            throw new BadRequestException('Request failed at this time, please try again later!');
+        }
+
+        const user = await this.userRepository.findOne({
+            where: {
+                id: id,
+                isActive: true,
+                isBlocked: false,
+                isSuspicious: false,
+            }
+        });
+
+        if(!user) {
+            throw new UnauthorizedException(
+                'User does not exist or has been blocked or marked as suspicious in our records.'
+            )
+        }
+
+        return user;
     }
 
 }

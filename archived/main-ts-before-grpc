@@ -9,12 +9,14 @@ import * as compression from 'compression';
 import helmet from 'helmet';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { urlencoded, json } from 'express';
+
 import { createBullBoard } from '@bull-board/api';
 import { BullAdapter } from '@bull-board/api/bullAdapter';
 import { ExpressAdapter } from '@bull-board/express';
 import { getQueueToken } from '@nestjs/bull';
 import { Queue } from 'bull';
 import * as basicAuth from 'express-basic-auth';
+import { GrpcOptions, Transport } from '@nestjs/microservices';
 
 
 dotenv.config();
@@ -61,9 +63,21 @@ async function bootstrap() {
       }),
     );
 
-    app.getHttpServer().on('listening', () => {
-      logger.log('gRPC service is running on: localhost:50051', 'Main');
-    });
+    // Set up gRPC server
+    const grpcOptions: GrpcOptions = {
+      transport: Transport.GRPC,
+      options: {
+        package: 'client', // The package defined in the .proto file
+        protoPath: join(__dirname, './client/client.proto'), // Path to your .proto file
+      },
+    };
+
+    app.connectMicroservice(grpcOptions);
+
+
+
+
+    
 
     // Global filters
     app.useGlobalFilters(new HttpExceptionFilter(logger));
@@ -116,6 +130,7 @@ async function bootstrap() {
 
     logger.log('Bull Board initialized at /admin/queues', 'Main');
 
+    // Start the server
     const port = process.env.PORT || 3000;
     await app.listen(port);
 

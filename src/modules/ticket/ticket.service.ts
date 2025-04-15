@@ -1010,7 +1010,7 @@ export class TicketService {
             limit = 10,
             department,
             sortBy = 'createdAt',
-            sortOrder = 'ASC' // Show oldest first by default
+            sortOrder = 'ASC'
         } = options;
 
         const queryBuilder = this.ticketRepository

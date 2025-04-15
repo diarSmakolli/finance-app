@@ -17,9 +17,6 @@ export class TicketMessage {
     @Column()
     message: string;
 
-    // @Column({ type: 'text', array: true, nullable: true })
-    // attachments: string[]; // Store file URLs
-
     @Column('jsonb', { nullable: true })
     attachments: {
         filename: string;
