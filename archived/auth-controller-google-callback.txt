@@ -14,7 +14,8 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly logger: AppLoggerService,
-  ) {}
+) {}
+
 
   // Google Auth Start
 
@@ -24,26 +25,21 @@ export class AuthController {
 
   @Get('google/callback')
   @UseGuards(GoogleOauthGuard)
-  async googleAuthRedirect(@Req() req: Request & AuthRequest, @Res() res: Response) {
+  async googleAuthRedirect(@Req() req: AuthRequest, @Res() res: Response) {
     this.logger.log('Handling Google Auth callback ...');
 
-    if (!req.user) {
-      this.logger.error('No user data found');
-      return res.status(400).json({
-        status: 'error',
-        statusCode: 404,
-        message: 'Authentication via Google has been failed, please try again.'
-      });
-    }
-
-    // 🔗 Call your service method to handle sign-in/up logic
-    await this.authService.handleGoogleCallback(req.user, req, res);
-
-    return res.status(200).json({
-      status: 'success',
-      statusCode: 200,
-      message: 'Authentication via Google has been successful.',
-    });
+    if (req.user) {
+        const user = req.user;
+        this.logger.log(`User details received: ${JSON.stringify(user)}`);
+    
+        return res.status(200).json({
+          message: 'Google authentication successful!',
+          user: user, 
+        });
+      } else {
+        this.logger.error('No user data found');
+        return res.status(400).json({ message: 'Google authentication failed' });
+      }
   }
   // Google Auth Ends
 
@@ -77,6 +73,7 @@ export class AuthController {
     );
     return res.json(user);
   }
+  
 
   @Get('self')
   @ApiResponse({

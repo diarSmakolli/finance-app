@@ -22,6 +22,7 @@ import { Notification } from '../notifications/notification.entity';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class AuthService {
@@ -47,8 +48,61 @@ export class AuthService {
         this.logger.log('Queue initialized and cleaned', 'AuthService');
     }
 
+    async handleGoogleCallback(googleUserData: any, req: Request, res: Response): Promise<any> {
+        const { email, providerId, firstName, lastName, profilePicture, oauthAccessToken } = googleUserData;
     
+        const lowercasedEmail = email.toLowerCase();
+        const user = await this.userRepository.findOne({ where: { email: lowercasedEmail } });
+    
+        // 🌱 If user doesn't exist, create it (like your signUp logic)
+        if (!user) {
 
+            let passwordGenerated = randomBytes(16).toString('hex');
+
+            const hashedPassword = await bcrypt.hash(passwordGenerated, 10);
+
+            const newUser = this.userRepository.create({
+                email: lowercasedEmail,
+                firstName,
+                lastName,
+                password: hashedPassword,
+                provider: 'google',
+                providerId,
+                profilePicture: "",
+                oauthAccessToken,
+                isSuspicious: false,
+                isActive: true,
+                isBlocked: false,
+                emailVerified: true,
+                role: 'client',
+                username: await this.generateUsernameByEmail(lowercasedEmail),
+            });
+    
+            const savedUser = await this.userRepository.save(newUser);
+    
+            // 📧 Send welcome email
+            this.sendMailQueue.add('create-client', {
+                email: savedUser.email,
+                firstName: savedUser.firstName,
+                lastName: savedUser.lastName,
+            }, {
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 30000 },
+                removeOnComplete: true,
+            });
+    
+            return this.finishLoginProcess(savedUser, req, res);
+        }
+    
+        // 🧠 If user exists, check status like in signIn
+        if (user.isBlocked || user.isSuspicious || !user.isActive) {
+            throw new UnauthorizedException('Your account is locked. Contact support.');
+        }
+    
+        // 🎯 Continue to login flow
+        return this.finishLoginProcess(user, req, res);
+    }
+    
     async signUp(userDto: CreateUserDto): Promise<any> {
         this.logger.log('Starting processing request', 'AuthService.signUp');
 
@@ -720,6 +774,119 @@ export class AuthService {
         }
 
         return user;
+    }
+
+    async finishLoginProcess(user: User, req: Request, res: Response): Promise<any> {
+
+        console.log("user: ", user);
+
+        const currentIp = req.headers['x-forwarded-for']?.toString().split(',')[0] || 'Unknown IP';
+        const deviceInfo = req.headers['user-agent'] || 'Unknown device';
+        const geo = geoip.lookup(currentIp) || {};
+        const currentTime = new Date().toISOString();
+    
+        // Save login history
+        const loginHistory = this.loginHistoryRepository.create({
+            ip: currentIp,
+            country: geo.country || 'Unknown',
+            city: geo.city || 'Unknown',
+            isp: geo.org || 'Unknown',
+            connectionType: 'Unknown',
+            sourceApp: 'web',
+            deviceType: 'web',
+            deviceName: deviceInfo,
+            os: deviceInfo,
+            browser: deviceInfo,
+            browserVersion: deviceInfo,
+            user,
+        });
+        
+        await this.loginHistoryRepository.save(loginHistory);
+    
+        // Update last login info
+        user.lastLoginIp = currentIp;
+        user.lastLoginCountry = geo.country;
+        user.lastLoginCity = geo.city;
+        user.lastLoginTime = new Date();
+
+        await this.userRepository.save(user);
+    
+        // Check for new device
+        const existingLogin = await this.loginHistoryRepository.findOne({
+            where: {
+                userId: user.id,
+                ip: currentIp,
+                deviceName: deviceInfo,
+            }
+        });
+    
+        if (!existingLogin) {
+            // Notify via email
+            const newNotification = this.notificationRepository.create({
+                title: "New device detected",
+                message: `New device detected from IP ${currentIp} at ${currentTime}.`,
+                read: false,
+                userId: user.id,
+            });
+            await this.notificationRepository.save(newNotification);
+    
+            this.sendMailQueue.add('login-new-device', {
+                email: user.email,
+                firstName: user.firstName,
+                ip: currentIp,
+                time: currentTime
+            }, {
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 60000 },
+                removeOnComplete: true,
+            });
+        }
+    
+        const payload = {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            hasAccess: user.hasAccess,
+        };
+
+        this.logger.log(`generating payload for access token with properties: id, email, role and hasAccess.`, 'AuthService.signIn');
+
+        const accessToken = this.jwtService.sign(payload, { expiresIn: '1h' });
+
+        console.log("access token: ", accessToken);
+
+        this.logger.debug(`Access token generated: ${accessToken}, and expires in 1 hour.`, 'AuthService.signIn');
+
+        res.cookie('accessToken', accessToken, {
+            httpOnly: true,
+            secure: false,
+            sameSite: 'strict',
+            maxAge: 3600000,
+        });
+    
+        const tokenHash = crypto.createHash('sha256').update(accessToken).digest('hex');
+
+        const session = this.sessionRepository.create({
+            tokenHash,
+            deviceInfo,
+            ipAddress: currentIp,
+            expiredAt: new Date(Date.now() + 60 * 60 * 1000), // 1hour
+            user: user
+        });
+
+        await this.sessionRepository.save(session);
+    
+        const responseUser = ResponseUserDto.fromEntity(user);
+    
+        return {
+            success: true,
+            message: 'Login successful',
+            data: { user: responseUser },
+        };
+    }
+    
+    async generatePassword(length = 32): Promise<string> {
+        return randomBytes(length).toString('hex');
     }
 
 }
